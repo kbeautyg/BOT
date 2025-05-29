@@ -1,0 +1,4 @@
+aiogram>=3.3
+supabase>=2.0
+python-dotenv>=0.21
+APScheduler>=3.9
