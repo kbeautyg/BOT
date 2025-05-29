@@ -1589,7 +1589,10 @@ async def process_repost_forwarded_message(message: types.Message, state: FSMCon
         await message.reply("Произошла непредвиденная ошибка при обработке пересланного сообщения. Пожалуйста, попробуй еще раз позже.")
         await state.finish()
 
-@dp.callback_query_handler(lambda c: c.data and c.data.startswith('repost_channel_select_'), state=RepostStates.waiting_for_repost_channel_selection)
+@dp.callback_query_handler(
+    lambda c: c.data and c.data.startswith('repost_channel_select_'),
+    state=RepostStates.waiting_for_repost_channel_selection
+)
 async def process_repost_channel_selection(callback_query: types.CallbackQuery, state: FSMContext):
     """
     Handles the selection of a channel for reposting.
@@ -1604,7 +1607,10 @@ async def process_repost_channel_selection(callback_query: types.CallbackQuery, 
         user_response = supabase.table('users').select('id').eq('telegram_id', user_telegram_id).execute()
         user_data = user_response.data
         if not user_data:
-            await bot.send_message(user_telegram_id, "Ваш пользовательский аккаунт не найден. Пожалуйста, начните с команды /start.")
+            await bot.send_message(
+                user_telegram_id,
+                "Ваш пользовательский аккаунт не найден. Пожалуйста, начните с команды /start."
+            )
             await state.finish()
             return
         user_uuid = user_data[0]['id']
@@ -1612,15 +1618,22 @@ async def process_repost_channel_selection(callback_query: types.CallbackQuery, 
         # Verify user has access to the selected channel
         channel_user_response = supabase.table('channel_users').select('role').eq('channel_id', selected_channel_uuid).eq('user_id', user_uuid).execute()
         if not channel_user_response.data:
-            await bot.send_message(user_telegram_id, "У вас нет доступа к этому каналу.")
+            await bot.send_message(
+                user_telegram_id,
+                "У вас нет доступа к этому каналу."
+            )
             await state.finish()
             return
 
         channel_response = supabase.table('channels').select('title', 'telegram_channel_id').eq('id', selected_channel_uuid).execute()
         selected_channel_title = channel_response.data[0]['title']
         telegram_channel_id = channel_response.data[0]['telegram_channel_id']
-        
-        await state.update_data(selected_channel_uuid=selected_channel_uuid, selected_channel_title=selected_channel_title, telegram_channel_id=telegram_channel_id)
+
+        await state.update_data(
+            selected_channel_uuid=selected_channel_uuid,
+            selected_channel_title=selected_channel_title,
+            telegram_channel_id=telegram_channel_id
+        )
 
         keyboard = InlineKeyboardMarkup(row_width=1)
         keyboard.add(
@@ -1630,6 +1643,7 @@ async def process_repost_channel_selection(callback_query: types.CallbackQuery, 
             InlineKeyboardButton("Запланировать репост", callback_data="repost_schedule"),
             InlineKeyboardButton("Отмена", callback_data="cancel_repost")
         )
+
         await bot.send_message(
             user_telegram_id,
             f"Выбран канал для репоста: *{escape_markdown(selected_channel_title)}*.\n"
@@ -1640,10 +1654,17 @@ async def process_repost_channel_selection(callback_query: types.CallbackQuery, 
 
     except Exception as e:
         logger.error(f"Error in process_repost_channel_selection: {e}")
-        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка. Пожалуйста, попробуй ещё раз позже.")
+        await bot.send_message(
+            user_telegram_id,
+            "Произошла непредвиденная ошибка. Пожалуйста, попробуйте ещё раз позже."
+        )
         await state.finish()
 
-@dp.callback_query_handler(lambda c: c.data == 'repost_add_text', state=RepostStates.waiting_for_repost_options)
+
+@dp.callback_query_handler(
+    lambda c: c.data == 'repost_add_text',
+    state=RepostStates.waiting_for_repost_options
+)
 async def repost_add_text_prompt(callback_query: types.CallbackQuery, state: FSMContext):
     """
     Prompts for additional text/caption for the reposted message.
@@ -1654,20 +1675,30 @@ async def repost_add_text_prompt(callback_query: types.CallbackQuery, state: FSM
         "Отправьте текст или подпись для репоста. Вы можете использовать форматирование MarkdownV2.\n"
         "Для отмены введите /cancel."
     )
-    await RepostStates.waiting_for_repost_options.set() # Stay in this state to capture text input
+    await RepostStates.waiting_for_repost_options.set()  # Stay in this state to capture text input
 
-@dp.message_handler(state=RepostStates.waiting_for_repost_options, content_types=types.ContentTypes.TEXT)
+
+@dp.message_handler(
+    state=RepostStates.waiting_for_repost_options,
+    content_types=types.ContentTypes.TEXT
+)
 async def process_repost_text(message: types.Message, state: FSMContext):
     """
     Processes the text/caption for the reposted message.
     """
     await state.update_data(repost_text=message.html_text)
     await message.reply("Текст/подпись для репоста сохранены.")
+
     # Return to options
-    # Re-send options by calling the handler that displays them
     data = await state.get_data()
     selected_channel_uuid = data.get('selected_channel_uuid')
-    dummy_callback_query = types.CallbackQuery(id='dummy', from_user=message.from_user, message=message, chat_instance='dummy', data=f"repost_channel_select_{selected_channel_uuid}")
+    dummy_callback_query = types.CallbackQuery(
+        id='dummy',
+        from_user=message.from_user,
+        message=message,
+        chat_instance='dummy',
+        data=f"repost_channel_select_{selected_channel_uuid}"
+    )
     await process_repost_channel_selection(dummy_callback_query, state)
 
 
