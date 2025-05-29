@@ -1,5 +1,5 @@
 pytz
-aiogram>=2.25.2
+aiogram==2.25.2
 supabase>=2.0
 python-dotenv>=0.21
 APScheduler>=3.9
