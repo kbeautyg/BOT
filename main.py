@@ -278,25 +278,25 @@ async def cmd_start(message: types.Message):
             if insert_response.data:
                 logger.info(f"New user registered: {user_id} ({username})")
                 await message.reply(
-                    "Привет\\! Я бот для управления публикациями в Telegram каналах\\.\n\n"
+                    "Привет! Я бот для управления публикациями в Telegram каналах.\n\n"
                     "Я помогу тебе планировать, редактировать и публиковать посты, "
-                    "управлять каналами и проектами, а также предоставлять доступ другим пользователям\\.\n\n"
-                    "Для начала, ты можешь добавить свой канал с помощью команды /add\_channel\\."
+                    "управлять каналами и проектами, а также предоставлять доступ другим пользователям.\n\n"
+                    "Для начала, ты можешь добавить свой канал с помощью команды /add_channel."
                 )
             else:
                 logger.error(f"Failed to register user {user_id}: {insert_response.json()}")
-                await message.reply("Произошла ошибка при регистрации\\. Пожалуйста, попробуй еще раз позже\\.")
+                await message.reply("Произошла ошибка при регистрации. Пожалуйста, попробуй еще раз позже.")
         else:
             # User already exists
             logger.info(f"Existing user {user_id} ({username}) started the bot.")
             await message.reply(
-                "С возвращением\\! Я готов помочь тебе с управлением постами\\.\n\n"
-                "Ты можешь использовать команды для планирования постов, управления каналами и проектами\\.\n"
-                "Например, /add\_channel для добавления нового канала или /list\_channels для просмотра твоих каналов\\."
+                "С возвращением! Я готов помочь тебе с управлением постами.\n\n"
+                "Ты можешь использовать команды для планирования постов, управления каналами и проектами.\n"
+                "Например, /add_channel для добавления нового канала или /list_channels для просмотра твоих каналов."
             )
     except Exception as e:
         logger.error(f"Error in /start command for user {user_id}: {e}")
-        await message.reply("Произошла непредвиденная ошибка\\. Пожалуйста, попробуй еще раз позже\\.")
+        await message.reply("Произошла непредвиденная ошибка. Пожалуйста, попробуй еще раз позже.")
 
 @dp.message_handler(commands=['add_channel'])
 async def cmd_add_channel(message: types.Message):
@@ -305,9 +305,9 @@ async def cmd_add_channel(message: types.Message):
     """
     await message.reply(
         "Чтобы добавить канал, выполни следующие шаги:\n\n"
-        "1\\. Добавь меня в свой канал как администратора с правами на публикацию сообщений и редактирование сообщений других администраторов\\.\n"
-        "2\\. Перешли мне любое сообщение из этого канала\\.\n\n"
-        "Я буду ждать пересланное сообщение\\."
+        "1. Добавь меня в свой канал как администратора с правами на публикацию сообщений и редактирование сообщений других администраторов.\n"
+        "2. Перешли мне любое сообщение из этого канала.\n\n"
+        "Я буду ждать пересланное сообщение."
     )
     await AddChannelStates.waiting_for_channel_id.set()
 
@@ -327,11 +327,11 @@ async def process_channel_forward(message: types.Message, state: FSMContext):
         chat_id = message.chat.id
         chat_title = message.chat.title
     else:
-        await message.reply("Пожалуйста, перешлите мне сообщение из канала, который вы хотите добавить, или отправьте сообщение напрямую из канала, если я уже там администратор\\.")
+        await message.reply("Пожалуйста, перешлите мне сообщение из канала, который вы хотите добавить, или отправьте сообщение напрямую из канала, если я уже там администратор.")
         return
 
     if not chat_id or not chat_title:
-        await message.reply("Не удалось получить информацию о канале\\. Убедитесь, что это сообщение из канала\\.")
+        await message.reply("Не удалось получить информацию о канале. Убедитесь, что это сообщение из канала.")
         return
 
     # Check if bot is admin in the channel
@@ -339,23 +339,23 @@ async def process_channel_forward(message: types.Message, state: FSMContext):
         chat_member = await bot.get_chat_member(chat_id, bot.id)
         if not chat_member.is_chat_admin():
             await message.reply(
-                f"Я не являюсь администратором в канале *{escape_markdown(chat_title)}*\\.\n"
-                "Пожалуйста, убедитесь, что вы добавили меня как администратора с необходимыми правами\\."
+                f"Я не являюсь администратором в канале *{escape_markdown(chat_title)}*.\n"
+                "Пожалуйста, убедитесь, что вы добавили меня как администратора с необходимыми правами."
             )
             return
         # Check specific permissions (can_post_messages, can_edit_messages)
         if not chat_member.can_post_messages or not chat_member.can_edit_messages:
             await message.reply(
-                f"У меня недостаточно прав администратора в канале *{escape_markdown(chat_title)}*\\.\n"
-                "Пожалуйста, дайте мне права на *публикацию сообщений* и *редактирование сообщений других администраторов*\\."
+                f"У меня недостаточно прав администратора в канале *{escape_markdown(chat_title)}*.\n"
+                "Пожалуйста, дайте мне права на *публикацию сообщений* и *редактирование сообщений других администраторов*."
             )
             return
 
     except Exception as e:
         logger.error(f"Error checking bot admin status in channel {chat_id}: {e}")
         await message.reply(
-            f"Не удалось проверить статус администратора в канале *{escape_markdown(chat_title)}*\\.\n"
-            "Возможно, я не добавлен в канал или произошла ошибка Telegram API\\."
+            f"Не удалось проверить статус администратора в канале *{escape_markdown(chat_title)}*.\n"
+            "Возможно, я не добавлен в канал или произошла ошибка Telegram API."
         )
         return
 
@@ -364,7 +364,7 @@ async def process_channel_forward(message: types.Message, state: FSMContext):
         user_response = supabase.table('users').select('id').eq('telegram_id', user_telegram_id).execute()
         user_data = user_response.data
         if not user_data:
-            await message.reply("Ваш пользовательский аккаунт не найден\\. Пожалуйста, начните с команды /start\\.")
+            await message.reply("Ваш пользовательский аккаунт не найден. Пожалуйста, начните с команды /start.")
             await state.finish()
             return
         user_uuid = user_data[0]['id']
@@ -380,16 +380,16 @@ async def process_channel_forward(message: types.Message, state: FSMContext):
             channel_owner_id = channel_owner_response.data[0]['owner_id']
 
             if channel_owner_id == user_uuid:
-                await message.reply(f"Канал *{escape_markdown(chat_title)}* уже добавлен и вы являетесь его владельцем\\.")
+                await message.reply(f"Канал *{escape_markdown(chat_title)}* уже добавлен и вы являетесь его владельцем.")
             else:
                 # Channel exists, but current user is not the owner. Check if user has access.
                 channel_user_response = supabase.table('channel_users').select('role').eq('channel_id', existing_channel_id).eq('user_id', user_uuid).execute()
                 if channel_user_response.data:
-                    await message.reply(f"Канал *{escape_markdown(chat_title)}* уже добавлен, и у вас есть к нему доступ\\.")
+                    await message.reply(f"Канал *{escape_markdown(chat_title)}* уже добавлен, и у вас есть к нему доступ.")
                 else:
                     await message.reply(
-                        f"Канал *{escape_markdown(chat_title)}* уже добавлен другим пользователем\\.\n"
-                        "Если вы хотите получить доступ к этому каналу, попросите его владельца добавить вас\\."
+                        f"Канал *{escape_markdown(chat_title)}* уже добавлен другим пользователем.\n"
+                        "Если вы хотите получить доступ к этому каналу, попросите его владельца добавить вас."
                     )
             await state.finish()
             return
@@ -415,16 +415,16 @@ async def process_channel_forward(message: types.Message, state: FSMContext):
             supabase.table('channel_users').insert(insert_channel_user_data).execute()
 
             await message.reply(
-                f"Канал *{escape_markdown(chat_title)}* успешно добавлен\\.\n"
-                "Теперь вы можете начать планировать посты для него\\."
+                f"Канал *{escape_markdown(chat_title)}* успешно добавлен.\n"
+                "Теперь вы можете начать планировать посты для него."
             )
         else:
             logger.error(f"Failed to add channel {chat_id}: {insert_channel_response.json()}")
-            await message.reply("Произошла ошибка при добавлении канала\\. Пожалуйста, попробуй еще раз позже\\.")
+            await message.reply("Произошла ошибка при добавлении канала. Пожалуйста, попробуй еще раз позже.")
 
     except Exception as e:
         logger.error(f"Error processing channel forward for user {user_telegram_id}: {e}")
-        await message.reply("Произошла непредвиденная ошибка при обработке канала\\. Пожалуйста, попробуй еще раз позже\\.")
+        await message.reply("Произошла непредвиденная ошибка при обработке канала. Пожалуйста, попробуй еще раз позже.")
     finally:
         await state.finish()
 
@@ -440,7 +440,7 @@ async def cmd_list_channels(message: types.Message):
         user_response = supabase.table('users').select('id').eq('telegram_id', user_telegram_id).execute()
         user_data = user_response.data
         if not user_data:
-            await message.reply("Ваш пользовательский аккаунт не найден\\. Пожалуйста, начните с команды /start\\.")
+            await message.reply("Ваш пользовательский аккаунт не найден. Пожалуйста, начните с команды /start.")
             return
         user_uuid = user_data[0]['id']
 
@@ -450,7 +450,7 @@ async def cmd_list_channels(message: types.Message):
         accessible_channels = response.data
 
         if not accessible_channels:
-            await message.reply("У вас пока нет доступа ни к одному каналу\\. Используйте команду /add\_channel, чтобы добавить новый канал\\.")
+            await message.reply("У вас пока нет доступа ни к одному каналу. Используйте команду /add_channel, чтобы добавить новый канал.")
             return
 
         channels_list_message = "*Ваши каналы:*\n\n"
@@ -483,7 +483,7 @@ async def cmd_list_channels(message: types.Message):
 
     except Exception as e:
         logger.error(f"Error in /list_channels command for user {user_telegram_id}: {e}")
-        await message.reply("Произошла непредвиденная ошибка при получении списка каналов\\. Пожалуйста, попробуй еще раз позже\\.")
+        await message.reply("Произошла непредвиденная ошибка при получении списка каналов. Пожалуйста, попробуй еще раз позже.")
 
 @dp.message_handler(commands=['remove_channel'])
 async def cmd_remove_channel(message: types.Message):
@@ -497,7 +497,7 @@ async def cmd_remove_channel(message: types.Message):
         user_response = supabase.table('users').select('id').eq('telegram_id', user_telegram_id).execute()
         user_data = user_response.data
         if not user_data:
-            await message.reply("Ваш пользовательский аккаунт не найден\\. Пожалуйста, начните с команды /start\\.")
+            await message.reply("Ваш пользовательский аккаунт не найден. Пожалуйста, начните с команды /start.")
             return
         user_uuid = user_data[0]['id']
 
@@ -506,7 +506,7 @@ async def cmd_remove_channel(message: types.Message):
         owned_channels = response.data
 
         if not owned_channels:
-            await message.reply("У вас нет каналов, которыми вы владеете и которые можно удалить\\.")
+            await message.reply("У вас нет каналов, которыми вы владеете и которые можно удалить.")
             return
 
         keyboard = InlineKeyboardMarkup(row_width=1)
@@ -521,7 +521,7 @@ async def cmd_remove_channel(message: types.Message):
 
     except Exception as e:
         logger.error(f"Error in /remove_channel command for user {user_telegram_id}: {e}")
-        await message.reply("Произошла непредвиденная ошибка при подготовке к удалению канала\\. Пожалуйста, попробуй еще раз позже\\.")
+        await message.reply("Произошла непредвиденная ошибка при подготовке к удалению канала. Пожалуйста, попробуй еще раз позже.")
 
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith('remove_channel_'), state=RemoveChannelStates.waiting_for_channel_selection)
 async def process_remove_channel_selection(callback_query: types.CallbackQuery, state: FSMContext):
@@ -537,7 +537,7 @@ async def process_remove_channel_selection(callback_query: types.CallbackQuery, 
         user_response = supabase.table('users').select('id').eq('telegram_id', user_telegram_id).execute()
         user_data = user_response.data
         if not user_data:
-            await bot.send_message(user_telegram_id, "Ваш пользовательский аккаунт не найден\\. Пожалуйста, начните с команды /start\\.")
+            await bot.send_message(user_telegram_id, "Ваш пользовательский аккаунт не найден. Пожалуйста, начните с команды /start.")
             await state.finish()
             return
         user_uuid = user_data[0]['id']
@@ -547,7 +547,7 @@ async def process_remove_channel_selection(callback_query: types.CallbackQuery, 
         channel_data = channel_response.data
 
         if not channel_data:
-            await bot.send_message(user_telegram_id, "Вы не являетесь владельцем этого канала или канал не найден\\.")
+            await bot.send_message(user_telegram_id, "Вы не являетесь владельцем этого канала или канал не найден.")
             await state.finish()
             return
 
@@ -564,14 +564,14 @@ async def process_remove_channel_selection(callback_query: types.CallbackQuery, 
         await bot.send_message(
             user_telegram_id,
             f"Вы уверены, что хотите удалить канал *{escape_markdown(channel_title)}*?\n"
-            "Это действие необратимо и удалит все связанные запланированные посты\\.",
+            "Это действие необратимо и удалит все связанные запланированные посты.",
             reply_markup=keyboard
         )
         await RemoveChannelStates.waiting_for_confirmation.set()
 
     except Exception as e:
         logger.error(f"Error processing remove channel selection for user {user_telegram_id}: {e}")
-        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка\\. Пожалуйста, попробуй еще раз позже\\.")
+        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка. Пожалуйста, попробуй еще раз позже.")
         await state.finish()
 
 @dp.callback_query_handler(lambda c: c.data in ["confirm_remove_channel_yes", "confirm_remove_channel_no"], state=RemoveChannelStates.waiting_for_confirmation)
@@ -592,15 +592,15 @@ async def process_remove_channel_confirmation(callback_query: types.CallbackQuer
             
             if delete_response.data:
                 logger.info(f"Channel {channel_title} ({channel_uuid}) removed by user {user_telegram_id}")
-                await bot.send_message(user_telegram_id, f"Канал *{escape_markdown(channel_title)}* успешно удален\\.")
+                await bot.send_message(user_telegram_id, f"Канал *{escape_markdown(channel_title)}* успешно удален.")
             else:
                 logger.error(f"Failed to remove channel {channel_uuid}: {delete_response.json()}")
-                await bot.send_message(user_telegram_id, "Произошла ошибка при удалении канала\\. Пожалуйста, попробуй еще раз позже\\.")
+                await bot.send_message(user_telegram_id, "Произошла ошибка при удалении канала. Пожалуйста, попробуй еще раз позже.")
         except Exception as e:
             logger.error(f"Error deleting channel {channel_uuid} for user {user_telegram_id}: {e}")
-            await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка при удалении канала\\. Пожалуйста, попробуй еще раз позже\\.")
+            await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка при удалении канала. Пожалуйста, попробуй еще раз позже.")
     else:
-        await bot.send_message(user_telegram_id, "Удаление канала отменено\\.")
+        await bot.send_message(user_telegram_id, "Удаление канала отменено.")
     
     await state.finish()
 
@@ -609,7 +609,7 @@ async def cmd_add_project(message: types.Message):
     """
     Initiates the process of adding a new project.
     """
-    await message.reply("Пожалуйста, введите название нового проекта\\.")
+    await message.reply("Пожалуйста, введите название нового проекта.")
     await AddProjectStates.waiting_for_project_name.set()
 
 @dp.message_handler(state=AddProjectStates.waiting_for_project_name, content_types=types.ContentTypes.TEXT)
@@ -621,14 +621,14 @@ async def process_project_name(message: types.Message, state: FSMContext):
     user_telegram_id = message.from_user.id
 
     if not project_name:
-        await message.reply("Название проекта не может быть пустым\\. Пожалуйста, введите название\\.")
+        await message.reply("Название проекта не может быть пустым. Пожалуйста, введите название.")
         return
 
     try:
         user_response = supabase.table('users').select('id').eq('telegram_id', user_telegram_id).execute()
         user_data = user_response.data
         if not user_data:
-            await message.reply("Ваш пользовательский аккаунт не найден\\. Пожалуйста, начните с команды /start\\.")
+            await message.reply("Ваш пользовательский аккаунт не найден. Пожалуйста, начните с команды /start.")
             await state.finish()
             return
         user_uuid = user_data[0]['id']
@@ -636,7 +636,7 @@ async def process_project_name(message: types.Message, state: FSMContext):
         # Check if project with this name already exists for this user
         existing_project_response = supabase.table('projects').select('id').eq('owner_id', user_uuid).eq('name', project_name).execute()
         if existing_project_response.data:
-            await message.reply(f"Проект с названием *{escape_markdown(project_name)}* уже существует\\.\nПожалуйста, выберите другое название или используйте существующий проект\\.")
+            await message.reply(f"Проект с названием *{escape_markdown(project_name)}* уже существует.\nПожалуйста, выберите другое название или используйте существующий проект.")
             await state.finish()
             return
 
@@ -648,14 +648,14 @@ async def process_project_name(message: types.Message, state: FSMContext):
 
         if insert_response.data:
             logger.info(f"Project '{project_name}' added by user {user_telegram_id}")
-            await message.reply(f"Проект *{escape_markdown(project_name)}* успешно создан\\.")
+            await message.reply(f"Проект *{escape_markdown(project_name)}* успешно создан.")
         else:
             logger.error(f"Failed to add project '{project_name}': {insert_response.json()}")
-            await message.reply("Произошла ошибка при создании проекта\\. Пожалуйста, попробуй еще раз позже\\.")
+            await message.reply("Произошла ошибка при создании проекта. Пожалуйста, попробуй еще раз позже.")
 
     except Exception as e:
         logger.error(f"Error in process_project_name for user {user_telegram_id}: {e}")
-        await message.reply("Произошла непредвиденная ошибка при создании проекта\\. Пожалуйста, попробуй еще раз позже\\.")
+        await message.reply("Произошла непредвиденная ошибка при создании проекта. Пожалуйста, попробуй еще раз позже.")
     finally:
         await state.finish()
 
@@ -670,7 +670,7 @@ async def cmd_list_projects(message: types.Message):
         user_response = supabase.table('users').select('id').eq('telegram_id', user_telegram_id).execute()
         user_data = user_response.data
         if not user_data:
-            await message.reply("Ваш пользовательский аккаунт не найден\\. Пожалуйста, начните с команды /start\\.")
+            await message.reply("Ваш пользовательский аккаунт не найден. Пожалуйста, начните с команды /start.")
             return
         user_uuid = user_data[0]['id']
 
@@ -678,7 +678,7 @@ async def cmd_list_projects(message: types.Message):
         projects = response.data
 
         if not projects:
-            await message.reply("У вас пока нет созданных проектов\\. Используйте команду /add\_project, чтобы создать новый\\.")
+            await message.reply("У вас пока нет созданных проектов. Используйте команду /add_project, чтобы создать новый.")
             return
 
         projects_list_message = "*Ваши проекты:*\n\n"
@@ -689,7 +689,7 @@ async def cmd_list_projects(message: types.Message):
 
     except Exception as e:
         logger.error(f"Error in /list_projects command for user {user_telegram_id}: {e}")
-        await message.reply("Произошла непредвиденная ошибка при получении списка проектов\\. Пожалуйста, попробуй еще раз позже\\.")
+        await message.reply("Произошла непредвиденная ошибка при получении списка проектов. Пожалуйста, попробуй еще раз позже.")
 
 @dp.message_handler(commands=['move_channel_to_project'])
 async def cmd_move_channel_to_project(message: types.Message):
@@ -703,7 +703,7 @@ async def cmd_move_channel_to_project(message: types.Message):
         user_response = supabase.table('users').select('id').eq('telegram_id', user_telegram_id).execute()
         user_data = user_response.data
         if not user_data:
-            await message.reply("Ваш пользовательский аккаунт не найден\\. Пожалуйста, начните с команды /start\\.")
+            await message.reply("Ваш пользовательский аккаунт не найден. Пожалуйста, начните с команды /start.")
             return
         user_uuid = user_data[0]['id']
 
@@ -712,7 +712,7 @@ async def cmd_move_channel_to_project(message: types.Message):
         owned_channels = response.data
 
         if not owned_channels:
-            await message.reply("У вас нет каналов, которыми вы владеете и которые можно переместить\\.")
+            await message.reply("У вас нет каналов, которыми вы владеете и которые можно переместить.")
             return
 
         keyboard = InlineKeyboardMarkup(row_width=1)
@@ -728,7 +728,7 @@ async def cmd_move_channel_to_project(message: types.Message):
 
     except Exception as e:
         logger.error(f"Error in /move_channel_to_project command for user {user_telegram_id}: {e}")
-        await message.reply("Произошла непредвиденная ошибка при подготовке к перемещению канала\\. Пожалуйста, попробуй еще раз позже\\.")
+        await message.reply("Произошла непредвиденная ошибка при подготовке к перемещению канала. Пожалуйста, попробуй еще раз позже.")
 
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith('move_channel_select_'), state=MoveChannelStates.waiting_for_channel_to_move_selection)
 async def process_channel_to_move_selection(callback_query: types.CallbackQuery, state: FSMContext):
@@ -745,7 +745,7 @@ async def process_channel_to_move_selection(callback_query: types.CallbackQuery,
         user_response = supabase.table('users').select('id').eq('telegram_id', user_telegram_id).execute()
         user_data = user_response.data
         if not user_data:
-            await bot.send_message(user_telegram_id, "Ваш пользовательский аккаунт не найден\\. Пожалуйста, начните с команды /start\\.")
+            await bot.send_message(user_telegram_id, "Ваш пользовательский аккаунт не найден. Пожалуйста, начните с команды /start.")
             await state.finish()
             return
         user_uuid = user_data[0]['id']
@@ -755,7 +755,7 @@ async def process_channel_to_move_selection(callback_query: types.CallbackQuery,
         channel_data = channel_response.data
 
         if not channel_data:
-            await bot.send_message(user_telegram_id, "Вы не являетесь владельцем этого канала или канал не найден\\.")
+            await bot.send_message(user_telegram_id, "Вы не являетесь владельцем этого канала или канал не найден.")
             await state.finish()
             return
 
@@ -780,7 +780,7 @@ async def process_channel_to_move_selection(callback_query: types.CallbackQuery,
 
         await bot.send_message(
             user_telegram_id,
-            f"Выбран канал: *{escape_markdown(channel_title)}*\\.\n"
+            f"Выбран канал: *{escape_markdown(channel_title)}*.\n"
             "Теперь выберите проект, в который вы хотите его переместить, или 'Без проекта':",
             reply_markup=keyboard
         )
@@ -788,7 +788,7 @@ async def process_channel_to_move_selection(callback_query: types.CallbackQuery,
 
     except Exception as e:
         logger.error(f"Error processing channel to move selection for user {user_telegram_id}: {e}")
-        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка\\. Пожалуйста, попробуй еще раз позже\\.")
+        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка. Пожалуйста, попробуй еще раз позже.")
         await state.finish()
 
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith('select_project_'), state=MoveChannelStates.waiting_for_project_selection)
@@ -808,7 +808,7 @@ async def process_project_selection_for_channel_move(callback_query: types.Callb
         user_response = supabase.table('users').select('id').eq('telegram_id', user_telegram_id).execute()
         user_data = user_response.data
         if not user_data:
-            await bot.send_message(user_telegram_id, "Ваш пользовательский аккаунт не найден\\. Пожалуйста, начните с команды /start\\.")
+            await bot.send_message(user_telegram_id, "Ваш пользовательский аккаунт не найден. Пожалуйста, начните с команды /start.")
             await state.finish()
             return
         user_uuid = user_data[0]['id']
@@ -823,7 +823,7 @@ async def process_project_selection_for_channel_move(callback_query: types.Callb
             project_response = supabase.table('projects').select('name').eq('id', project_id).eq('owner_id', user_uuid).execute()
             project_data = project_response.data
             if not project_data:
-                await bot.send_message(user_telegram_id, "Выбранный проект не найден или не принадлежит вам\\.")
+                await bot.send_message(user_telegram_id, "Выбранный проект не найден или не принадлежит вам.")
                 await state.finish()
                 return
             selected_project_name = project_data[0]['name']
@@ -835,15 +835,15 @@ async def process_project_selection_for_channel_move(callback_query: types.Callb
             logger.info(f"Channel '{channel_title}' moved to project '{selected_project_name}' by user {user_telegram_id}")
             await bot.send_message(
                 user_telegram_id,
-                f"Канал *{escape_markdown(channel_title)}* успешно перемещен в проект *{escape_markdown(selected_project_name)}*\\."
+                f"Канал *{escape_markdown(channel_title)}* успешно перемещен в проект *{escape_markdown(selected_project_name)}*."
             )
         else:
             logger.error(f"Failed to move channel {channel_uuid} to project {project_id}: {update_response.json()}")
-            await bot.send_message(user_telegram_id, "Произошла ошибка при перемещении канала\\. Пожалуйста, попробуй еще раз позже\\.")
+            await bot.send_message(user_telegram_id, "Произошла ошибка при перемещении канала. Пожалуйста, попробуй еще раз позже.")
 
     except Exception as e:
         logger.error(f"Error processing project selection for channel move for user {user_telegram_id}: {e}")
-        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка\\. Пожалуйста, попробуй еще раз позже\\.")
+        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка. Пожалуйста, попробуй еще раз позже.")
     finally:
         await state.finish()
 
@@ -858,7 +858,7 @@ async def cmd_new_post(message: types.Message, state: FSMContext):
         user_response = supabase.table('users').select('id').eq('telegram_id', user_telegram_id).execute()
         user_data = user_response.data
         if not user_data:
-            await message.reply("Ваш пользовательский аккаунт не найден\\. Пожалуйста, начните с команды /start\\.")
+            await message.reply("Ваш пользовательский аккаунт не найден. Пожалуйста, начните с команды /start.")
             return
         user_uuid = user_data[0]['id']
 
@@ -867,7 +867,7 @@ async def cmd_new_post(message: types.Message, state: FSMContext):
         accessible_channels = response.data
 
         if not accessible_channels:
-            await message.reply("У вас нет доступа ни к одному каналу для создания постов\\. Используйте команду /add\_channel, чтобы добавить новый канал\\.")
+            await message.reply("У вас нет доступа ни к одному каналу для создания постов. Используйте команду /add_channel, чтобы добавить новый канал.")
             return
 
         keyboard = InlineKeyboardMarkup(row_width=1)
@@ -883,7 +883,7 @@ async def cmd_new_post(message: types.Message, state: FSMContext):
 
     except Exception as e:
         logger.error(f"Error in /new_post command for user {user_telegram_id}: {e}")
-        await message.reply("Произошла непредвиденная ошибка при начале создания поста\\. Пожалуйста, попробуй еще раз позже\\.")
+        await message.reply("Произошла непредвиденная ошибка при начале создания поста. Пожалуйста, попробуй еще раз позже.")
 
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith('select_channel_for_post_'), state=PostCreationStates.waiting_for_channel_selection)
 async def process_channel_selection_for_post(callback_query: types.CallbackQuery, state: FSMContext):
@@ -900,7 +900,7 @@ async def process_channel_selection_for_post(callback_query: types.CallbackQuery
         user_response = supabase.table('users').select('id').eq('telegram_id', user_telegram_id).execute()
         user_data = user_response.data
         if not user_data:
-            await bot.send_message(user_telegram_id, "Ваш пользовательский аккаунт не найден\\. Пожалуйста, начните с команды /start\\.")
+            await bot.send_message(user_telegram_id, "Ваш пользовательский аккаунт не найден. Пожалуйста, начните с команды /start.")
             await state.finish()
             return
         user_uuid = user_data[0]['id']
@@ -908,7 +908,7 @@ async def process_channel_selection_for_post(callback_query: types.CallbackQuery
         # Verify user has access to the selected channel
         channel_user_response = supabase.table('channel_users').select('role').eq('channel_id', channel_uuid).eq('user_id', user_uuid).execute()
         if not channel_user_response.data:
-            await bot.send_message(user_telegram_id, "У вас нет доступа к этому каналу\\.")
+            await bot.send_message(user_telegram_id, "У вас нет доступа к этому каналу.")
             await state.finish()
             return
 
@@ -919,16 +919,16 @@ async def process_channel_selection_for_post(callback_query: types.CallbackQuery
 
         await bot.send_message(
             user_telegram_id,
-            f"Выбран канал: *{escape_markdown(channel_title)}*\\.\n"
-            "Теперь отправьте мне текст для вашего поста\\. Вы можете использовать форматирование MarkdownV2\\.\n"
-            "Если пост будет только с медиа, отправьте медиафайл без текста, а затем нажмите 'Продолжить'\\.\n"
-            "Для отмены введите /cancel\\."
+            f"Выбран канал: *{escape_markdown(channel_title)}*.\n"
+            "Теперь отправьте мне текст для вашего поста. Вы можете использовать форматирование MarkdownV2.\n"
+            "Если пост будет только с медиа, отправьте медиафайл без текста, а затем нажмите 'Продолжить'.\n"
+            "Для отмены введите /cancel."
         )
         await PostCreationStates.waiting_for_post_content.set()
 
     except Exception as e:
         logger.error(f"Error processing channel selection for post for user {user_telegram_id}: {e}")
-        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка\\. Пожалуйста, попробуй еще раз позже\\.")
+        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка. Пожалуйста, попробуй еще раз позже.")
         await state.finish()
 
 @dp.message_handler(state=PostCreationStates.waiting_for_post_content, content_types=types.ContentTypes.ANY)
@@ -943,15 +943,15 @@ async def process_post_content(message: types.Message, state: FSMContext):
     # Handle text
     if message.text:
         if post_text: # If text was already set (e.g., from a previous message in an album)
-            await message.reply("Вы уже отправили текст или подпись\\. Для альбомов текст должен быть в первом сообщении\\.")
+            await message.reply("Вы уже отправили текст или подпись. Для альбомов текст должен быть в первом сообщении.")
             return
         post_text = message.html_text # Use html_text to preserve formatting for later MarkdownV2 conversion
         await state.update_data(post_text=post_text)
         await message.reply(
-            "Текст поста сохранен\\. Теперь вы можете:\n"
+            "Текст поста сохранен. Теперь вы можете:\n"
             "• Отправить медиафайл (фото, видео, гиф, голосовое, аудио, документ)\n"
             "• Отправить несколько фото/видео для создания альбома\n"
-            "• Нажать 'Продолжить' для перехода к добавлению кнопок или публикации\\.",
+            "• Нажать 'Продолжить' для перехода к добавлению кнопок или публикации.",
             reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("Продолжить", callback_data="continue_post_creation"))
         )
         return
@@ -971,10 +971,10 @@ async def process_post_content(message: types.Message, state: FSMContext):
     elif message.document:
         media_info = {'type': 'document', 'file_id': message.document.file_id}
     elif message.poll:
-        await message.reply("Опросы будут обрабатываться на следующем шаге\\. Пожалуйста, сначала отправьте текст или медиа\\.")
+        await message.reply("Опросы будут обрабатываться на следующем шаге. Пожалуйста, сначала отправьте текст или медиа.")
         return
     else:
-        await message.reply("Неподдерживаемый тип контента\\. Пожалуйста, отправьте текст, фото, видео, гиф, голосовое, аудио или документ\\.")
+        await message.reply("Неподдерживаемый тип контента. Пожалуйста, отправьте текст, фото, видео, гиф, голосовое, аудио или документ.")
         return
 
     if media_info:
@@ -982,7 +982,7 @@ async def process_post_content(message: types.Message, state: FSMContext):
         # For single media, caption can be present.
         if message.caption:
             if post_text: # If text was already set, it means user sent text then media with caption
-                await message.reply("Вы уже отправили текст поста\\. Подпись к медиа будет проигнорирована, если текст поста уже установлен\\.")
+                await message.reply("Вы уже отправили текст поста. Подпись к медиа будет проигнорирована, если текст поста уже установлен.")
             else:
                 post_text = message.caption_html # Use html_text to preserve formatting
                 await state.update_data(post_text=post_text)
@@ -991,12 +991,12 @@ async def process_post_content(message: types.Message, state: FSMContext):
         await state.update_data(post_media=post_media)
 
         await message.reply(
-            "Медиафайл добавлен\\. Вы можете добавить еще медиа для альбома или:\n"
-            "• Нажать 'Продолжить' для перехода к добавлению кнопок или публикации\\.",
+            "Медиафайл добавлен. Вы можете добавить еще медиа для альбома или:\n"
+            "• Нажать 'Продолжить' для перехода к добавлению кнопок или публикации.",
             reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("Продолжить", callback_data="continue_post_creation"))
         )
     else:
-        await message.reply("Пожалуйста, отправьте текст или медиафайл\\.")
+        await message.reply("Пожалуйста, отправьте текст или медиафайл.")
 
 @dp.callback_query_handler(lambda c: c.data == 'continue_post_creation', state=PostCreationStates.waiting_for_post_content)
 async def continue_post_creation(callback_query: types.CallbackQuery, state: FSMContext):
@@ -1009,7 +1009,7 @@ async def continue_post_creation(callback_query: types.CallbackQuery, state: FSM
     post_media = data.get('post_media', [])
 
     if not post_text and not post_media:
-        await bot.send_message(callback_query.from_user.id, "Пожалуйста, сначала отправьте текст или медиа для поста\\.")
+        await bot.send_message(callback_query.from_user.id, "Пожалуйста, сначала отправьте текст или медиа для поста.")
         return
 
     keyboard = InlineKeyboardMarkup(row_width=1)
@@ -1039,7 +1039,7 @@ async def add_inline_buttons_prompt(callback_query: types.CallbackQuery, state: 
         "Пример:\n"
         "`Посетить сайт - https://example.com`\n"
         "`Нажми меня - my_callback_data`\n\n"
-        "Для завершения добавления кнопок или если кнопок нет, нажмите 'Продолжить'\\.",
+        "Для завершения добавления кнопок или если кнопок нет, нажмите 'Продолжить'.",
         reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("Продолжить", callback_data="continue_after_buttons"))
     )
     # We stay in waiting_for_buttons state to capture text input for buttons
@@ -1067,15 +1067,15 @@ async def process_inline_buttons(message: types.Message, state: FSMContext):
             else:
                 parsed_buttons.append({'text': button_text, 'callback_data': button_value})
         else:
-            await message.reply(f"Неверный формат кнопки: `{escape_markdown(btn_raw)}`\\. Используйте 'Текст кнопки \\- Значение'\\.")
+            await message.reply(f"Неверный формат кнопки: `{escape_markdown(btn_raw)}`. Используйте 'Текст кнопки \\- Значение'.")
             return # Stop processing and ask user to correct
 
     current_buttons.extend(parsed_buttons)
     await state.update_data(post_buttons=current_buttons)
 
     await message.reply(
-        "Кнопки добавлены\\. Вы можете добавить еще кнопки или:\n"
-        "• Нажать 'Продолжить' для перехода к добавлению опроса или публикации\\.",
+        "Кнопки добавлены. Вы можете добавить еще кнопки или:\n"
+        "• Нажать 'Продолжить' для перехода к добавлению опроса или публикации.",
         reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("Продолжить", callback_data="continue_after_buttons"))
     )
 
@@ -1106,8 +1106,8 @@ async def add_poll_question_prompt(callback_query: types.CallbackQuery, state: F
     await bot.answer_callback_query(callback_query.id)
     await bot.send_message(
         callback_query.from_user.id,
-        "Отправьте мне вопрос для опроса\\.\n"
-        "Для отмены добавления опроса введите /cancel\\."
+        "Отправьте мне вопрос для опроса.\n"
+        "Для отмены добавления опроса введите /cancel."
     )
     await PostCreationStates.waiting_for_poll_question.set() # Stay in this state to capture text input
 
@@ -1118,13 +1118,13 @@ async def process_poll_question(message: types.Message, state: FSMContext):
     """
     poll_question = message.text.strip()
     if not poll_question:
-        await message.reply("Вопрос для опроса не может быть пустым\\. Пожалуйста, введите вопрос\\.")
+        await message.reply("Вопрос для опроса не может быть пустым. Пожалуйста, введите вопрос.")
         return
     
     await state.update_data(poll_question=poll_question)
     await message.reply(
-        "Вопрос для опроса сохранен\\. Теперь отправьте мне варианты ответов, каждый с новой строки\\.\n"
-        "Минимум 2, максимум 10 вариантов\\.\n\n"
+        "Вопрос для опроса сохранен. Теперь отправьте мне варианты ответов, каждый с новой строки.\n"
+        "Минимум 2, максимум 10 вариантов.\n\n"
         "Пример:\n"
         "`Вариант 1`\n"
         "`Вариант 2`\n"
@@ -1141,7 +1141,7 @@ async def process_poll_options(message: types.Message, state: FSMContext):
     poll_options = [opt.strip() for opt in poll_options_raw if opt.strip()]
 
     if not (2 <= len(poll_options) <= 10):
-        await message.reply("Количество вариантов должно быть от 2 до 10\\. Пожалуйста, введите варианты еще раз\\.")
+        await message.reply("Количество вариантов должно быть от 2 до 10. Пожалуйста, введите варианты еще раз.")
         return
     
     await state.update_data(poll_options=poll_options)
@@ -1152,7 +1152,7 @@ async def process_poll_options(message: types.Message, state: FSMContext):
         InlineKeyboardButton("Викторина", callback_data="poll_type_quiz")
     )
     await message.reply(
-        "Варианты ответов сохранены\\. Теперь выберите тип опроса:",
+        "Варианты ответов сохранены. Теперь выберите тип опроса:",
         reply_markup=keyboard
     )
     await PostCreationStates.waiting_for_poll_type.set()
@@ -1172,7 +1172,7 @@ async def process_poll_type(callback_query: types.CallbackQuery, state: FSMConte
 
     if poll_type == 'regular':
         await state.update_data(post_poll={'question': poll_question, 'options': poll_options, 'type': 'regular'})
-        await bot.send_message(callback_query.from_user.id, "Опрос успешно добавлен\\.")
+        await bot.send_message(callback_query.from_user.id, "Опрос успешно добавлен.")
         # Move to preview state
         await show_post_preview(callback_query.from_user.id, state)
     elif poll_type == 'quiz':
@@ -1201,7 +1201,7 @@ async def process_quiz_correct_option(callback_query: types.CallbackQuery, state
     poll_options = data['poll_options']
 
     if not (0 <= correct_option_index < len(poll_options)):
-        await bot.send_message(callback_query.from_user.id, "Неверный индекс правильного ответа\\. Пожалуйста, попробуйте еще раз\\.")
+        await bot.send_message(callback_query.from_user.id, "Неверный индекс правильного ответа. Пожалуйста, попробуйте еще раз.")
         return
 
     await state.update_data(post_poll={
@@ -1210,7 +1210,7 @@ async def process_quiz_correct_option(callback_query: types.CallbackQuery, state
         'type': 'quiz',
         'correct_option_id': correct_option_index
     })
-    await bot.send_message(callback_query.from_user.id, "Викторина успешно добавлена\\.")
+    await bot.send_message(callback_query.from_user.id, "Викторина успешно добавлена.")
     # Move to preview state
     await show_post_preview(callback_query.from_user.id, state)
 
@@ -1220,7 +1220,7 @@ async def skip_poll_creation(callback_query: types.CallbackQuery, state: FSMCont
     Skips poll creation and moves to preview.
     """
     await bot.answer_callback_query(callback_query.id)
-    await bot.send_message(callback_query.from_user.id, "Добавление опроса пропущено\\.")
+    await bot.send_message(callback_query.from_user.id, "Добавление опроса пропущено.")
     await show_post_preview(callback_query.from_user.id, state)
 
 @dp.callback_query_handler(lambda c: c.data == 'publish_now', state=PostCreationStates.waiting_for_preview_action)
@@ -1271,13 +1271,13 @@ async def publish_post_now(callback_query: types.CallbackQuery, state: FSMContex
                 'telegram_message_id': sent_message.message_id if not isinstance(sent_message, list) else sent_message[0].message_id # For albums, take first message ID
             }
             supabase.table('posts').insert(insert_data).execute()
-            await bot.send_message(user_telegram_id, "Пост успешно опубликован\\! 🎉")
+            await bot.send_message(user_telegram_id, "Пост успешно опубликован! 🎉")
         else:
-            await bot.send_message(user_telegram_id, "Не удалось опубликовать пост\\. Произошла ошибка\\.")
+            await bot.send_message(user_telegram_id, "Не удалось опубликовать пост. Произошла ошибка.")
 
     except Exception as e:
         logger.error(f"Error publishing post for user {user_telegram_id}: {e}")
-        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка при публикации поста\\. Пожалуйста, попробуй еще раз позже\\.")
+        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка при публикации поста. Пожалуйста, попробуй еще раз позже.")
     finally:
         await state.finish()
 
@@ -1289,8 +1289,8 @@ async def schedule_post_prompt_date(callback_query: types.CallbackQuery, state: 
     await bot.answer_callback_query(callback_query.id)
     await bot.send_message(
         callback_query.from_user.id,
-        "Введите дату публикации в формате `ГГГГ-ММ-ДД` (например, `2025-12-31`)\\.\n"
-        "Для отмены введите /cancel\\."
+        "Введите дату публикации в формате `ГГГГ-ММ-ДД` (например, `2025-12-31`).\n"
+        "Для отмены введите /cancel."
     )
     await SchedulePostStates.waiting_for_date.set()
 
@@ -1303,16 +1303,16 @@ async def process_schedule_date(message: types.Message, state: FSMContext):
     try:
         schedule_date = datetime.strptime(date_str, '%Y-%m-%d').date()
         if schedule_date < datetime.now().date():
-            await message.reply("Дата не может быть в прошлом\\. Пожалуйста, введите будущую дату\\.")
+            await message.reply("Дата не может быть в прошлом. Пожалуйста, введите будущую дату.")
             return
         await state.update_data(schedule_date=schedule_date)
         await message.reply(
-            "Дата сохранена\\. Теперь введите время публикации в формате `ЧЧ:ММ` (например, `14:30`)\\.\n"
-            "Время будет учтено по вашему текущему часовому поясу (UTC, если не настроено)\\."
+            "Дата сохранена. Теперь введите время публикации в формате `ЧЧ:ММ` (например, `14:30`).\n"
+            "Время будет учтено по вашему текущему часовому поясу (UTC, если не настроено)."
         )
         await SchedulePostStates.waiting_for_time.set()
     except ValueError:
-        await message.reply("Неверный формат даты\\. Пожалуйста, используйте `ГГГГ-ММ-ДД` (например, `2025-12-31`)\\.")
+        await message.reply("Неверный формат даты. Пожалуйста, используйте `ГГГГ-ММ-ДД` (например, `2025-12-31`).")
 
 @dp.message_handler(state=SchedulePostStates.waiting_for_time, content_types=types.ContentTypes.TEXT)
 async def process_schedule_time(message: types.Message, state: FSMContext):
@@ -1340,7 +1340,7 @@ async def process_schedule_time(message: types.Message, state: FSMContext):
         scheduled_datetime_utc = scheduled_datetime_local.astimezone(pytz.utc)
 
         if scheduled_datetime_utc < datetime.now(pytz.utc):
-            await message.reply("Время не может быть в прошлом\\. Пожалуйста, введите будущее время\\.")
+            await message.reply("Время не может быть в прошлом. Пожалуйста, введите будущее время.")
             return
 
         # Determine if it's a regular post or a repost
@@ -1372,17 +1372,17 @@ async def process_schedule_time(message: types.Message, state: FSMContext):
             logger.info(f"{post_type_msg.capitalize()} scheduled for channel {data.get('selected_channel_title')} by user {user_telegram_id} at {scheduled_datetime_utc}")
             await message.reply(
                 f"Ваш {post_type_msg} успешно запланирован на *{escape_markdown(scheduled_datetime_local.strftime('%Y-%m-%d %H:%M'))}* "
-                f"\\(ваш часовой пояс: {escape_markdown(user_timezone_str)}\\)\\."
+                f"\\(ваш часовой пояс: {escape_markdown(user_timezone_str)}\\)."
             )
         else:
             logger.error(f"Failed to schedule {post_type_msg}: {insert_response.json()}")
-            await message.reply(f"Произошла ошибка при планировании {post_type_msg}\\. Пожалуйста, попробуй еще раз позже\\.")
+            await message.reply(f"Произошла ошибка при планировании {post_type_msg}. Пожалуйста, попробуй еще раз позже.")
 
     except ValueError:
-        await message.reply("Неверный формат времени\\. Пожалуйста, используйте `ЧЧ:ММ` (например, `14:30`)\\.")
+        await message.reply("Неверный формат времени. Пожалуйста, используйте `ЧЧ:ММ` (например, `14:30`).")
     except Exception as e:
         logger.error(f"Error scheduling {post_type_msg} for user {user_telegram_id}: {e}")
-        await message.reply("Произошла непредвиденная ошибка при планировании {post_type_msg}\\. Пожалуйста, попробуй еще раз позже\\.")
+        await message.reply("Произошла непредвиденная ошибка при планировании {post_type_msg}. Пожалуйста, попробуй еще раз позже.")
     finally:
         await state.finish()
 
@@ -1419,14 +1419,14 @@ async def save_post_as_draft(callback_query: types.CallbackQuery, state: FSMCont
 
         if insert_response.data:
             logger.info(f"Post saved as draft for channel {data.get('selected_channel_title')} by user {user_telegram_id}")
-            await bot.send_message(user_telegram_id, "Пост успешно сохранен в черновики\\.")
+            await bot.send_message(user_telegram_id, "Пост успешно сохранен в черновики.")
         else:
             logger.error(f"Failed to save post as draft: {insert_response.json()}")
-            await bot.send_message(user_telegram_id, "Произошла ошибка при сохранении черновика\\. Пожалуйста, попробуй еще раз позже\\.")
+            await bot.send_message(user_telegram_id, "Произошла ошибка при сохранении черновика. Пожалуйста, попробуй еще раз позже.")
 
     except Exception as e:
         logger.error(f"Error saving post as draft for user {user_telegram_id}: {e}")
-        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка при сохранении черновика\\. Пожалуйста, попробуй еще раз позже\\.")
+        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка при сохранении черновика. Пожалуйста, попробуй еще раз позже.")
     finally:
         await state.finish()
 
@@ -1512,11 +1512,11 @@ async def process_publish_as_selection(callback_query: types.CallbackQuery, stat
             supabase.table('posts').insert(insert_data).execute()
             await bot.send_message(user_telegram_id, f"Пост успешно опубликован от имени *{escape_markdown(publish_as_type)}*! 🎉")
         else:
-            await bot.send_message(user_telegram_id, "Не удалось опубликовать пост\\. Произошла ошибка\\.")
+            await bot.send_message(user_telegram_id, "Не удалось опубликовать пост. Произошла ошибка.")
 
     except Exception as e:
         logger.error(f"Error publishing post as {publish_as_type} for user {user_telegram_id}: {e}")
-        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка при публикации поста\\. Пожалуйста, попробуй еще раз позже\\.")
+        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка при публикации поста. Пожалуйста, попробуй еще раз позже.")
     finally:
         await state.finish()
 
@@ -1526,8 +1526,8 @@ async def cmd_repost(message: types.Message):
     Initiates the reposting process by asking the user to forward a message.
     """
     await message.reply(
-        "Пожалуйста, перешлите мне сообщение из канала или чата, которое вы хотите репостнуть\\.\n"
-        "Для отмены введите /cancel\\."
+        "Пожалуйста, перешлите мне сообщение из канала или чата, которое вы хотите репостнуть.\n"
+        "Для отмены введите /cancel."
     )
     await RepostStates.waiting_for_forwarded_message.set()
 
@@ -1537,14 +1537,14 @@ async def process_repost_forwarded_message(message: types.Message, state: FSMCon
     Processes the forwarded message for reposting.
     """
     if not message.forward_from_chat and not message.forward_from:
-        await message.reply("Пожалуйста, перешлите мне сообщение из канала или чата\\.")
+        await message.reply("Пожалуйста, перешлите мне сообщение из канала или чата.")
         return
 
     original_chat_id = message.forward_from_chat.id if message.forward_from_chat else message.forward_from.id
     original_message_id = message.forward_from_message_id
 
     if not original_chat_id or not original_message_id:
-        await message.reply("Не удалось получить информацию о пересланном сообщении\\. Убедитесь, что это пересланное сообщение\\.")
+        await message.reply("Не удалось получить информацию о пересланном сообщении. Убедитесь, что это пересланное сообщение.")
         return
 
     await state.update_data(
@@ -1559,7 +1559,7 @@ async def process_repost_forwarded_message(message: types.Message, state: FSMCon
         user_response = supabase.table('users').select('id').eq('telegram_id', user_telegram_id).execute()
         user_data = user_response.data
         if not user_data:
-            await message.reply("Ваш пользовательский аккаунт не найден\\. Пожалуйста, начните с команды /start\\.")
+            await message.reply("Ваш пользовательский аккаунт не найден. Пожалуйста, начните с команды /start.")
             await state.finish()
             return
         user_uuid = user_data[0]['id']
@@ -1569,7 +1569,7 @@ async def process_repost_forwarded_message(message: types.Message, state: FSMCon
         accessible_channels = response.data
 
         if not accessible_channels:
-            await message.reply("У вас нет доступа ни к одному каналу для репоста\\. Используйте команду /add\_channel, чтобы добавить новый канал\\.")
+            await message.reply("У вас нет доступа ни к одному каналу для репоста. Используйте команду /add_channel, чтобы добавить новый канал.")
             await state.finish()
             return
 
@@ -1586,7 +1586,7 @@ async def process_repost_forwarded_message(message: types.Message, state: FSMCon
 
     except Exception as e:
         logger.error(f"Error processing forwarded message for repost for user {user_telegram_id}: {e}")
-        await message.reply("Произошла непредвиденная ошибка при обработке пересланного сообщения\\. Пожалуйста, попробуй еще раз позже\\.")
+        await message.reply("Произошла непредвиденная ошибка при обработке пересланного сообщения. Пожалуйста, попробуй еще раз позже.")
         await state.finish()
 
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith('repost_channel_select_'), state=RepostStates.waiting_for_repost_channel_selection)
@@ -1604,7 +1604,7 @@ async def process_repost_channel_selection(callback_query: types.CallbackQuery, 
         user_response = supabase.table('users').select('id').eq('telegram_id', user_telegram_id).execute()
         user_data = user_response.data
         if not user_data:
-            await bot.send_message(user_telegram_id, "Ваш пользовательский аккаунт не найден\\. Пожалуйста, начните с команды /start\\.")
+            await bot.send_message(user_telegram_id, "Ваш пользовательский аккаунт не найден. Пожалуйста, начните с команды /start.")
             await state.finish()
             return
         user_uuid = user_data[0]['id']
@@ -1612,7 +1612,7 @@ async def process_repost_channel_selection(callback_query: types.CallbackQuery, 
         # Verify user has access to the selected channel
         channel_user_response = supabase.table('channel_users').select('role').eq('channel_id', selected_channel_uuid).eq('user_id', user_uuid).execute()
         if not channel_user_response.data:
-            await bot.send_message(user_telegram_id, "У вас нет доступа к этому каналу\\.")
+            await bot.send_message(user_telegram_id, "У вас нет доступа к этому каналу.")
             await state.finish()
             return
 
@@ -1632,7 +1632,7 @@ async def process_repost_channel_selection(callback_query: types.CallbackQuery, 
         )
         await bot.send_message(
             user_telegram_id,
-            f"Выбран канал для репоста: *{escape_markdown(selected_channel_title)}*\\.\n"
+            f"Выбран канал для репоста: *{escape_markdown(selected_channel_title)}*.\n"
             "Что вы хотите сделать с репостом?",
             reply_markup=keyboard
         )
@@ -1646,8 +1646,8 @@ async def repost_add_text_prompt(callback_query: types.CallbackQuery, state: FSM
     await bot.answer_callback_query(callback_query.id)
     await bot.send_message(
         callback_query.from_user.id,
-        "Отправьте текст или подпись для репоста\\. Вы можете использовать форматирование MarkdownV2\\.\n"
-        "Для отмены введите /cancel\\."
+        "Отправьте текст или подпись для репоста. Вы можете использовать форматирование MarkdownV2.\n"
+        "Для отмены введите /cancel."
     )
     await RepostStates.waiting_for_repost_options.set() # Stay in this state to capture text input
 
@@ -1657,7 +1657,7 @@ async def process_repost_text(message: types.Message, state: FSMContext):
     Processes the text/caption for the reposted message.
     """
     await state.update_data(repost_text=message.html_text)
-    await message.reply("Текст/подпись для репоста сохранены\\.")
+    await message.reply("Текст/подпись для репоста сохранены.")
     # Return to options
     # Re-send options by calling the handler that displays them
     data = await state.get_data()
@@ -1677,7 +1677,7 @@ async def repost_add_buttons_prompt(callback_query: types.CallbackQuery, state: 
         "Отправьте мне кнопки в следующем формате (каждая кнопка с новой строки):\n"
         "`Текст кнопки - URL` (для URL-кнопок)\n"
         "`Текст кнопки - callback_data` (для callback-кнопок)\n\n"
-        "Для завершения добавления кнопок или если кнопок нет, нажмите 'Продолжить'\\.",
+        "Для завершения добавления кнопок или если кнопок нет, нажмите 'Продолжить'.",
         reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("Продолжить", callback_data="repost_continue_after_buttons"))
     )
     await RepostStates.waiting_for_repost_options.set() # Stay in this state to capture text input
@@ -1704,13 +1704,13 @@ async def process_repost_buttons(message: types.Message, state: FSMContext):
             else:
                 parsed_buttons.append({'text': button_text, 'callback_data': button_value})
         else:
-            await message.reply(f"Неверный формат кнопки: `{escape_markdown(btn_raw)}`\\. Используйте 'Текст кнопки \\- Значение'\\.")
+            await message.reply(f"Неверный формат кнопки: `{escape_markdown(btn_raw)}`. Используйте 'Текст кнопки \\- Значение'.")
             return # Stop processing and ask user to correct
 
     current_buttons.extend(parsed_buttons)
     await state.update_data(repost_buttons=current_buttons)
 
-    await message.reply("Кнопки добавлены\\.")
+    await message.reply("Кнопки добавлены.")
     # Return to options
     # Re-send options by calling the handler that displays them
     data = await state.get_data()
@@ -1780,13 +1780,13 @@ async def repost_message_now(callback_query: types.CallbackQuery, state: FSMCont
                 'telegram_message_id': sent_message.message_id
             }
             supabase.table('posts').insert(insert_data).execute()
-            await bot.send_message(user_telegram_id, "Сообщение успешно репостнуто\\! 🎉")
+            await bot.send_message(user_telegram_id, "Сообщение успешно репостнуто! 🎉")
         else:
-            await bot.send_message(user_telegram_id, "Не удалось репостнуть сообщение\\. Произошла ошибка\\.")
+            await bot.send_message(user_telegram_id, "Не удалось репостнуть сообщение. Произошла ошибка.")
 
     except Exception as e:
         logger.error(f"Error reposting message for user {user_telegram_id}: {e}")
-        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка при репосте сообщения\\. Пожалуйста, попробуй еще раз позже\\.")
+        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка при репосте сообщения. Пожалуйста, попробуй еще раз позже.")
     finally:
         await state.finish()
 
@@ -1798,8 +1798,8 @@ async def repost_schedule_prompt_date(callback_query: types.CallbackQuery, state
     await bot.answer_callback_query(callback_query.id)
     await bot.send_message(
         callback_query.from_user.id,
-        "Введите дату публикации репоста в формате `ГГГГ-ММ-ДД` (например, `2025-12-31`)\\.\n"
-        "Для отмены введите /cancel\\."
+        "Введите дату публикации репоста в формате `ГГГГ-ММ-ДД` (например, `2025-12-31`).\n"
+        "Для отмены введите /cancel."
     )
     await SchedulePostStates.waiting_for_date.set() # Reuse SchedulePostStates for date/time
 
@@ -1810,7 +1810,7 @@ async def cancel_repost_creation(callback_query: types.CallbackQuery, state: FSM
     """
     await bot.answer_callback_query(callback_query.id)
     await state.finish()
-    await bot.send_message(callback_query.from_user.id, "Репост отменен\\.")
+    await bot.send_message(callback_query.from_user.id, "Репост отменен.")
 
 @dp.message_handler(commands=['cancel'], state='*')
 async def cmd_cancel(message: types.Message, state: FSMContext):
@@ -1819,11 +1819,11 @@ async def cmd_cancel(message: types.Message, state: FSMContext):
     """
     current_state = await state.get_state()
     if current_state is None:
-        await message.reply("Нет активных операций для отмены\\.")
+        await message.reply("Нет активных операций для отмены.")
         return
 
     await state.finish()
-    await message.reply("Операция отменена\\.")
+    await message.reply("Операция отменена.")
 
 @dp.message_handler(commands=['list_scheduled_posts', 'drafts'])
 async def cmd_list_posts(message: types.Message):
@@ -1836,7 +1836,7 @@ async def cmd_list_posts(message: types.Message):
         user_response = supabase.table('users').select('id').eq('telegram_id', user_telegram_id).execute()
         user_data = user_response.data
         if not user_data:
-            await message.reply("Ваш пользовательский аккаунт не найден\\. Пожалуйста, начните с команды /start\\.")
+            await message.reply("Ваш пользовательский аккаунт не найден. Пожалуйста, начните с команды /start.")
             return
         user_uuid = user_data[0]['id']
 
@@ -1844,14 +1844,14 @@ async def cmd_list_posts(message: types.Message):
         accessible_channel_ids = [item['channel_id'] for item in channel_access_response.data]
 
         if not accessible_channel_ids:
-            await message.reply("У вас нет доступа ни к одному каналу\\. Нет постов для отображения\\.")
+            await message.reply("У вас нет доступа ни к одному каналу. Нет постов для отображения.")
             return
 
         response = supabase.table('posts').select('id, text, media, schedule_time, status, channels(title)').in_('channel_id', accessible_channel_ids).or_('status.eq.scheduled,status.eq.draft').order('schedule_time', desc=False).execute()
         posts = response.data
 
         if not posts:
-            await message.reply("У вас пока нет запланированных постов или черновиков\\.")
+            await message.reply("У вас пока нет запланированных постов или черновиков.")
             return
 
         posts_list_message = "*Ваши запланированные посты и черновики:*\n\n"
@@ -1880,7 +1880,7 @@ async def cmd_list_posts(message: types.Message):
                 schedule_info = f" на *{escape_markdown(local_dt.strftime('%Y-%m-%d %H:%M'))}*"
 
             posts_list_message += (
-                f"• ID: `{post_id[:8]}`\\.\\.\\. \\- Канал: *{channel_title}*\n"
+                f"• ID: `{post_id[:8]}`... \\- Канал: *{channel_title}*\n"
                 f"  Статус: *{post_status}*{schedule_info}\n"
                 f"  Содержание: {escape_markdown(post_summary)}\n\n"
             )
@@ -1889,7 +1889,7 @@ async def cmd_list_posts(message: types.Message):
 
     except Exception as e:
         logger.error(f"Error in /list_scheduled_posts command for user {user_telegram_id}: {e}")
-        await message.reply("Произошла непредвиденная ошибка при получении списка постов\\. Пожалуйста, попробуй еще раз позже\\.")
+        await message.reply("Произошла непредвиденная ошибка при получении списка постов. Пожалуйста, попробуй еще раз позже.")
 
 @dp.message_handler(commands=['edit_post'])
 async def cmd_edit_post(message: types.Message):
@@ -1902,7 +1902,7 @@ async def cmd_edit_post(message: types.Message):
         user_response = supabase.table('users').select('id').eq('telegram_id', user_telegram_id).execute()
         user_data = user_response.data
         if not user_data:
-            await message.reply("Ваш пользовательский аккаунт не найден\\. Пожалуйста, начните с команды /start\\.")
+            await message.reply("Ваш пользовательский аккаунт не найден. Пожалуйста, начните с команды /start.")
             return
         user_uuid = user_data[0]['id']
 
@@ -1910,14 +1910,14 @@ async def cmd_edit_post(message: types.Message):
         accessible_channel_ids = [item['channel_id'] for item in channel_access_response.data]
 
         if not accessible_channel_ids:
-            await message.reply("У вас нет доступа ни к одному каналу\\. Нет постов для редактирования\\.")
+            await message.reply("У вас нет доступа ни к одному каналу. Нет постов для редактирования.")
             return
 
         response = supabase.table('posts').select('id, text, media, schedule_time, status, channels(title)').in_('channel_id', accessible_channel_ids).or_('status.eq.scheduled,status.eq.draft').order('schedule_time', desc=False).execute()
         posts_to_edit = response.data
 
         if not posts_to_edit:
-            await message.reply("У вас нет запланированных постов или черновиков для редактирования\\.")
+            await message.reply("У вас нет запланированных постов или черновиков для редактирования.")
             return
 
         keyboard = InlineKeyboardMarkup(row_width=1)
@@ -1949,7 +1949,7 @@ async def cmd_edit_post(message: types.Message):
 
     except Exception as e:
         logger.error(f"Error in /edit_post command for user {user_telegram_id}: {e}")
-        await message.reply("Произошла непредвиденная ошибка при подготовке к редактированию поста\\. Пожалуйста, попробуй еще раз позже\\.")
+        await message.reply("Произошла непредвиденная ошибка при подготовке к редактированию поста. Пожалуйста, попробуй еще раз позже.")
 
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith('edit_post_select_'), state=EditPostStates.waiting_for_post_to_edit_selection)
 async def process_post_to_edit_selection(callback_query: types.CallbackQuery, state: FSMContext):
@@ -1965,7 +1965,7 @@ async def process_post_to_edit_selection(callback_query: types.CallbackQuery, st
         user_response = supabase.table('users').select('id').eq('telegram_id', user_telegram_id).execute()
         user_data = user_response.data
         if not user_data:
-            await bot.send_message(user_telegram_id, "Ваш пользовательский аккаунт не найден\\. Пожалуйста, начните с команды /start\\.")
+            await bot.send_message(user_telegram_id, "Ваш пользовательский аккаунт не найден. Пожалуйста, начните с команды /start.")
             await state.finish()
             return
         user_uuid = user_data[0]['id']
@@ -1975,7 +1975,7 @@ async def process_post_to_edit_selection(callback_query: types.CallbackQuery, st
         post_data = post_response.data
         
         if not post_data:
-            await bot.send_message(user_telegram_id, "Пост не найден или у вас нет прав на его редактирование\\.")
+            await bot.send_message(user_telegram_id, "Пост не найден или у вас нет прав на его редактирование.")
             await state.finish()
             return
         
@@ -2030,7 +2030,7 @@ async def process_post_to_edit_selection(callback_query: types.CallbackQuery, st
 
     except Exception as e:
         logger.error(f"Error processing post to edit selection for user {user_telegram_id}: {e}")
-        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка\\. Пожалуйста, попробуй еще раз позже\\.")
+        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка. Пожалуйста, попробуй еще раз позже.")
         await state.finish()
 
 @dp.callback_query_handler(lambda c: c.data.startswith('edit_option_'), state=EditPostStates.waiting_for_edit_option)
@@ -2045,28 +2045,28 @@ async def process_edit_option(callback_query: types.CallbackQuery, state: FSMCon
     post_uuid = data['editing_post_uuid']
 
     if edit_option == 'text':
-        await bot.send_message(user_telegram_id, "Отправьте новый текст для поста\\. Для удаления текста отправьте `-`\\.")
+        await bot.send_message(user_telegram_id, "Отправьте новый текст для поста. Для удаления текста отправьте `-`.")
         await EditPostStates.waiting_for_new_text.set()
     elif edit_option == 'media':
-        await bot.send_message(user_telegram_id, "Отправьте новые медиафайлы (фото, видео, гиф, голосовое, аудио, документ)\\. Для удаления медиа отправьте `-`\\.")
+        await bot.send_message(user_telegram_id, "Отправьте новые медиафайлы (фото, видео, гиф, голосовое, аудио, документ). Для удаления медиа отправьте `-`.")
         await state.update_data(new_post_media=[]) # Reset media for new input
         await EditPostStates.waiting_for_new_media.set()
     elif edit_option == 'buttons':
-        await bot.send_message(user_telegram_id, "Отправьте новые кнопки в формате `Текст - Значение` (каждая с новой строки)\\. Для удаления кнопок отправьте `-`\\.")
+        await bot.send_message(user_telegram_id, "Отправьте новые кнопки в формате `Текст - Значение` (каждая с новой строки). Для удаления кнопок отправьте `-`.")
         await state.update_data(new_post_buttons=[]) # Reset buttons for new input
         await EditPostStates.waiting_for_new_buttons.set()
     elif edit_option == 'poll':
-        await bot.send_message(user_telegram_id, "Отправьте новый вопрос для опроса\\. Для удаления опроса отправьте `-`\\.")
+        await bot.send_message(user_telegram_id, "Отправьте новый вопрос для опроса. Для удаления опроса отправьте `-`.")
         await state.update_data(new_post_poll=None) # Reset poll for new input
         await EditPostStates.waiting_for_new_poll_question.set()
     elif edit_option == 'time':
-        await bot.send_message(user_telegram_id, "Введите новую дату публикации в формате `ГГГГ-ММ-ДД` (например, `2025-12-31`)\\.")
+        await bot.send_message(user_telegram_id, "Введите новую дату публикации в формате `ГГГГ-ММ-ДД` (например, `2025-12-31`).")
         await EditPostStates.waiting_for_new_schedule_date.set()
     elif edit_option == 'done':
-        await bot.send_message(user_telegram_id, "Редактирование завершено\\.")
+        await bot.send_message(user_telegram_id, "Редактирование завершено.")
         await state.finish()
     elif edit_option == 'cancel':
-        await bot.send_message(user_telegram_id, "Редактирование отменено\\.")
+        await bot.send_message(user_telegram_id, "Редактирование отменено.")
         await state.finish()
 
 # Handlers for new content input during editing
@@ -2079,14 +2079,14 @@ async def process_new_text(message: types.Message, state: FSMContext):
         new_text = message.html_text # Preserve formatting
     
     await state.update_data(post_text=new_text)
-    await message.reply("Текст обновлен\\.")
+    await message.reply("Текст обновлен.")
     await show_post_preview(message.from_user.id, state) # Show preview and options again
 
 @dp.message_handler(state=EditPostStates.waiting_for_new_media, content_types=types.ContentTypes.ANY)
 async def process_new_media(message: types.Message, state: FSMContext):
     if message.text and message.text.strip() == '-':
         await state.update_data(post_media=[])
-        await message.reply("Медиа удалены\\.")
+        await message.reply("Медиа удалены.")
         await show_post_preview(message.from_user.id, state)
         return
 
@@ -2104,7 +2104,7 @@ async def process_new_media(message: types.Message, state: FSMContext):
     elif message.document:
         media_info = {'type': 'document', 'file_id': message.document.file_id}
     else:
-        await message.reply("Неподдерживаемый тип контента\\. Пожалуйста, отправьте медиафайл или '-' для удаления\\.")
+        await message.reply("Неподдерживаемый тип контента. Пожалуйста, отправьте медиафайл или '-' для удаления.")
         return
 
     data = await state.get_data()
@@ -2113,8 +2113,8 @@ async def process_new_media(message: types.Message, state: FSMContext):
     await state.update_data(new_post_media=new_post_media)
 
     await message.reply(
-        "Медиафайл добавлен\\. Вы можете добавить еще медиа для альбома или:\n"
-        "• Нажать 'Завершить добавление медиа' для продолжения\\.",
+        "Медиафайл добавлен. Вы можете добавить еще медиа для альбома или:\n"
+        "• Нажать 'Завершить добавление медиа' для продолжения.",
         reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("Завершить добавление медиа", callback_data="done_adding_media"))
     )
 
@@ -2123,7 +2123,7 @@ async def done_adding_media_for_edit(callback_query: types.CallbackQuery, state:
     await bot.answer_callback_query(callback_query.id)
     data = await state.get_data()
     await state.update_data(post_media=data.get('new_post_media', [])) # Transfer new_post_media to post_media
-    await bot.send_message(callback_query.from_user.id, "Медиа обновлены\\.")
+    await bot.send_message(callback_query.from_user.id, "Медиа обновлены.")
     await show_post_preview(callback_query.from_user.id, state)
 
 @dp.message_handler(state=EditPostStates.waiting_for_new_buttons, content_types=types.ContentTypes.TEXT)
@@ -2131,7 +2131,7 @@ async def process_new_buttons(message: types.Message, state: FSMContext):
     new_buttons_raw = message.text.strip()
     if new_buttons_raw == '-':
         await state.update_data(post_buttons=[])
-        await message.reply("Кнопки удалены\\.")
+        await message.reply("Кнопки удалены.")
         await show_post_preview(message.from_user.id, state)
         return
 
@@ -2146,11 +2146,11 @@ async def process_new_buttons(message: types.Message, state: FSMContext):
             else:
                 parsed_buttons.append({'text': button_text, 'callback_data': button_value})
         else:
-            await message.reply(f"Неверный формат кнопки: `{escape_markdown(btn_raw)}`\\. Используйте 'Текст кнопки \\- Значение'\\.")
+            await message.reply(f"Неверный формат кнопки: `{escape_markdown(btn_raw)}`. Используйте 'Текст кнопки \\- Значение'.")
             return
     
     await state.update_data(post_buttons=parsed_buttons)
-    await message.reply("Кнопки обновлены\\.")
+    await message.reply("Кнопки обновлены.")
     await show_post_preview(message.from_user.id, state)
 
 @dp.message_handler(state=EditPostStates.waiting_for_new_poll_question, content_types=types.ContentTypes.TEXT)
@@ -2158,12 +2158,12 @@ async def process_new_poll_question(message: types.Message, state: FSMContext):
     new_poll_question = message.text.strip()
     if new_poll_question == '-':
         await state.update_data(post_poll=None)
-        await message.reply("Опрос удален\\.")
+        await message.reply("Опрос удален.")
         await show_post_preview(message.from_user.id, state)
         return
     
     await state.update_data(new_poll_question=new_poll_question)
-    await message.reply("Вопрос для опроса сохранен\\. Теперь отправьте варианты ответов, каждый с новой строки\\.")
+    await message.reply("Вопрос для опроса сохранен. Теперь отправьте варианты ответов, каждый с новой строки.")
     await EditPostStates.waiting_for_new_poll_options.set()
 
 @dp.message_handler(state=EditPostStates.waiting_for_new_poll_options, content_types=types.ContentTypes.TEXT)
@@ -2172,7 +2172,7 @@ async def process_new_poll_options(message: types.Message, state: FSMContext):
     new_poll_options = [opt.strip() for opt in new_poll_options_raw if opt.strip()]
 
     if not (2 <= len(new_poll_options) <= 10):
-        await message.reply("Количество вариантов должно быть от 2 до 10\\. Пожалуйста, введите варианты еще раз\\.")
+        await message.reply("Количество вариантов должно быть от 2 до 10. Пожалуйста, введите варианты еще раз.")
         return
     
     await state.update_data(new_poll_options=new_poll_options)
@@ -2183,7 +2183,7 @@ async def process_new_poll_options(message: types.Message, state: FSMContext):
         InlineKeyboardButton("Викторина", callback_data="new_poll_type_quiz")
     )
     await message.reply(
-        "Варианты ответов сохранены\\. Теперь выберите тип опроса:",
+        "Варианты ответов сохранены. Теперь выберите тип опроса:",
         reply_markup=keyboard
     )
     await EditPostStates.waiting_for_new_poll_type.set()
@@ -2199,7 +2199,7 @@ async def process_new_poll_type(callback_query: types.CallbackQuery, state: FSMC
 
     if poll_type == 'regular':
         await state.update_data(post_poll={'question': new_poll_question, 'options': new_poll_options, 'type': 'regular'})
-        await bot.send_message(callback_query.from_user.id, "Опрос обновлен\\.")
+        await bot.send_message(callback_query.from_user.id, "Опрос обновлен.")
         await show_post_preview(callback_query.from_user.id, state)
     elif poll_type == 'quiz':
         keyboard = InlineKeyboardMarkup(row_width=1)
@@ -2223,7 +2223,7 @@ async def process_new_quiz_correct_option(callback_query: types.CallbackQuery, s
     new_poll_options = data['new_poll_options']
 
     if not (0 <= correct_option_index < len(new_poll_options)):
-        await bot.send_message(callback_query.from_user.id, "Неверный индекс правильного ответа\\. Пожалуйста, попробуйте еще раз\\.")
+        await bot.send_message(callback_query.from_user.id, "Неверный индекс правильного ответа. Пожалуйста, попробуйте еще раз.")
         return
 
     await state.update_data(post_poll={
@@ -2232,7 +2232,7 @@ async def process_new_quiz_correct_option(callback_query: types.CallbackQuery, s
         'type': 'quiz',
         'correct_option_id': correct_option_index
     })
-    await bot.send_message(callback_query.from_user.id, "Викторина обновлена\\.")
+    await bot.send_message(callback_query.from_user.id, "Викторина обновлена.")
     await show_post_preview(callback_query.from_user.id, state)
 
 @dp.message_handler(state=EditPostStates.waiting_for_new_schedule_date, content_types=types.ContentTypes.TEXT)
@@ -2241,15 +2241,15 @@ async def process_new_schedule_date(message: types.Message, state: FSMContext):
     try:
         schedule_date = datetime.strptime(date_str, '%Y-%m-%d').date()
         if schedule_date < datetime.now().date():
-            await message.reply("Дата не может быть в прошлом\\. Пожалуйста, введите будущую дату\\.")
+            await message.reply("Дата не может быть в прошлом. Пожалуйста, введите будущую дату.")
             return
         await state.update_data(new_schedule_date=schedule_date)
         await message.reply(
-            "Дата сохранена\\. Теперь введите новое время публикации в формате `ЧЧ:ММ` (например, `14:30`)\\."
+            "Дата сохранена. Теперь введите новое время публикации в формате `ЧЧ:ММ` (например, `14:30`)."
         )
         await EditPostStates.waiting_for_new_schedule_time.set()
     except ValueError:
-        await message.reply("Неверный формат даты\\. Пожалуйста, используйте `ГГГГ-ММ-ДД` (например, `2025-12-31`)\\.")
+        await message.reply("Неверный формат даты. Пожалуйста, используйте `ГГГГ-ММ-ДД` (например, `2025-12-31`).")
 
 @dp.message_handler(state=EditPostStates.waiting_for_new_schedule_time, content_types=types.ContentTypes.TEXT)
 async def process_new_schedule_time(message: types.Message, state: FSMContext):
@@ -2271,21 +2271,21 @@ async def process_new_schedule_time(message: types.Message, state: FSMContext):
         scheduled_datetime_utc = scheduled_datetime_local.astimezone(pytz.utc)
 
         if scheduled_datetime_utc < datetime.now(pytz.utc):
-            await message.reply("Новое время не может быть в прошлом\\. Пожалуйста, введите будущее время\\.")
+            await message.reply("Новое время не может быть в прошлом. Пожалуйста, введите будущее время.")
             return
 
         await state.update_data(schedule_time=scheduled_datetime_utc.isoformat(), status='scheduled')
         await message.reply(
             f"Время публикации обновлено на *{escape_markdown(scheduled_datetime_local.strftime('%Y-%m-%d %H:%M'))}* "
-            f"\\(ваш часовой пояс: {escape_markdown(user_timezone_str)}\\)\\."
+            f"\\(ваш часовой пояс: {escape_markdown(user_timezone_str)}\\)."
         )
         await show_post_preview(message.from_user.id, state)
 
     except ValueError:
-        await message.reply("Неверный формат времени\\. Пожалуйста, используйте `ЧЧ:ММ` (например, `14:30`)\\.")
+        await message.reply("Неверный формат времени. Пожалуйста, используйте `ЧЧ:ММ` (например, `14:30`).")
     except Exception as e:
         logger.error(f"Error processing new schedule time for user {user_telegram_id}: {e}")
-        await message.reply("Произошла непредвиденная ошибка при обновлении времени\\. Пожалуйста, попробуй еще раз позже\\.")
+        await message.reply("Произошла непредвиденная ошибка при обновлении времени. Пожалуйста, попробуй еще раз позже.")
 
 @dp.callback_query_handler(lambda c: c.data == 'cancel_edit_post', state=EditPostStates.waiting_for_edit_option)
 async def cancel_edit_post(callback_query: types.CallbackQuery, state: FSMContext):
@@ -2294,7 +2294,7 @@ async def cancel_edit_post(callback_query: types.CallbackQuery, state: FSMContex
     """
     await bot.answer_callback_query(callback_query.id)
     await state.finish()
-    await bot.send_message(callback_query.from_user.id, "Редактирование поста отменено\\.")
+    await bot.send_message(callback_query.from_user.id, "Редактирование поста отменено.")
 
 @dp.callback_query_handler(lambda c: c.data == 'edit_option_done', state=EditPostStates.waiting_for_edit_option)
 async def finalize_post_edit(callback_query: types.CallbackQuery, state: FSMContext):
@@ -2322,14 +2322,14 @@ async def finalize_post_edit(callback_query: types.CallbackQuery, state: FSMCont
 
         if update_response.data:
             logger.info(f"Post {post_uuid} updated by user {user_telegram_id}")
-            await bot.send_message(user_telegram_id, "Пост успешно обновлен\\!")
+            await bot.send_message(user_telegram_id, "Пост успешно обновлен!")
         else:
             logger.error(f"Failed to update post {post_uuid}: {update_response.json()}")
-            await bot.send_message(user_telegram_id, "Произошла ошибка при обновлении поста\\. Пожалуйста, попробуй еще раз позже\\.")
+            await bot.send_message(user_telegram_id, "Произошла ошибка при обновлении поста. Пожалуйста, попробуй еще раз позже.")
 
     except Exception as e:
         logger.error(f"Error finalizing post edit for user {user_telegram_id}: {e}")
-        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка при обновлении поста\\. Пожалуйста, попробуй еще раз позже\\.")
+        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка при обновлении поста. Пожалуйста, попробуй еще раз позже.")
     finally:
         await state.finish()
 
@@ -2344,7 +2344,7 @@ async def cmd_delete_post(message: types.Message):
         user_response = supabase.table('users').select('id').eq('telegram_id', user_telegram_id).execute()
         user_data = user_response.data
         if not user_data:
-            await message.reply("Ваш пользовательский аккаунт не найден\\. Пожалуйста, начните с команды /start\\.")
+            await message.reply("Ваш пользовательский аккаунт не найден. Пожалуйста, начните с команды /start.")
             return
         user_uuid = user_data[0]['id']
 
@@ -2352,14 +2352,14 @@ async def cmd_delete_post(message: types.Message):
         accessible_channel_ids = [item['channel_id'] for item in channel_access_response.data]
 
         if not accessible_channel_ids:
-            await message.reply("У вас нет доступа ни к одному каналу\\. Нет постов для удаления\\.")
+            await message.reply("У вас нет доступа ни к одному каналу. Нет постов для удаления.")
             return
 
         response = supabase.table('posts').select('id, text, media, schedule_time, status, channels(title)').in_('channel_id', accessible_channel_ids).or_('status.eq.scheduled,status.eq.draft').order('schedule_time', desc=False).execute()
         posts_to_delete = response.data
 
         if not posts_to_delete:
-            await message.reply("У вас нет запланированных постов или черновиков для удаления\\.")
+            await message.reply("У вас нет запланированных постов или черновиков для удаления.")
             return
 
         keyboard = InlineKeyboardMarkup(row_width=1)
@@ -2391,7 +2391,7 @@ async def cmd_delete_post(message: types.Message):
 
     except Exception as e:
         logger.error(f"Error in /delete_post command for user {user_telegram_id}: {e}")
-        await message.reply("Произошла непредвиденная ошибка при подготовке к удалению поста\\. Пожалуйста, попробуй еще раз позже\\.")
+        await message.reply("Произошла непредвиденная ошибка при подготовке к удалению поста. Пожалуйста, попробуй еще раз позже.")
 
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith('delete_post_select_'), state=DeletePostStates.waiting_for_post_to_delete_selection)
 async def process_post_to_delete_selection(callback_query: types.CallbackQuery, state: FSMContext):
@@ -2407,7 +2407,7 @@ async def process_post_to_delete_selection(callback_query: types.CallbackQuery, 
         user_response = supabase.table('users').select('id').eq('telegram_id', user_telegram_id).execute()
         user_data = user_response.data
         if not user_data:
-            await bot.send_message(user_telegram_id, "Ваш пользовательский аккаунт не найден\\. Пожалуйста, начните с команды /start\\.")
+            await bot.send_message(user_telegram_id, "Ваш пользовательский аккаунт не найден. Пожалуйста, начните с команды /start.")
             await state.finish()
             return
         user_uuid = user_data[0]['id']
@@ -2417,7 +2417,7 @@ async def process_post_to_delete_selection(callback_query: types.CallbackQuery, 
         post_data = post_response.data
         
         if not post_data:
-            await bot.send_message(user_telegram_id, "Пост не найден или у вас нет прав на его удаление\\.")
+            await bot.send_message(user_telegram_id, "Пост не найден или у вас нет прав на его удаление.")
             await state.finish()
             return
         
@@ -2436,14 +2436,14 @@ async def process_post_to_delete_selection(callback_query: types.CallbackQuery, 
         await bot.send_message(
             user_telegram_id,
             f"Вы уверены, что хотите удалить пост из канала *{channel_title}* с содержанием: \"{escape_markdown(post_summary)}\"?\n"
-            "Это действие необратимо\\.",
+            "Это действие необратимо.",
             reply_markup=keyboard
         )
         await DeletePostStates.waiting_for_delete_confirmation.set()
 
     except Exception as e:
         logger.error(f"Error processing post to delete selection for user {user_telegram_id}: {e}")
-        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка\\. Пожалуйста, попробуй еще раз позже\\.")
+        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка. Пожалуйста, попробуй еще раз позже.")
         await state.finish()
 
 @dp.callback_query_handler(lambda c: c.data in ["confirm_delete_post_yes", "confirm_delete_post_no"], state=DeletePostStates.waiting_for_delete_confirmation)
@@ -2464,15 +2464,15 @@ async def process_delete_post_confirmation(callback_query: types.CallbackQuery, 
             
             if delete_response.data:
                 logger.info(f"Post {post_uuid} deleted by user {user_telegram_id}")
-                await bot.send_message(user_telegram_id, f"Пост из канала *{channel_title}* с содержанием \"{escape_markdown(post_summary)}\" успешно удален\\.")
+                await bot.send_message(user_telegram_id, f"Пост из канала *{channel_title}* с содержанием \"{escape_markdown(post_summary)}\" успешно удален.")
             else:
                 logger.error(f"Failed to delete post {post_uuid}: {delete_response.json()}")
-                await bot.send_message(user_telegram_id, "Произошла ошибка при удалении поста\\. Пожалуйста, попробуй еще раз позже\\.")
+                await bot.send_message(user_telegram_id, "Произошла ошибка при удалении поста. Пожалуйста, попробуй еще раз позже.")
         except Exception as e:
             logger.error(f"Error deleting post {post_uuid} for user {user_telegram_id}: {e}")
-            await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка при удалении поста\\. Пожалуйста, попробуй еще раз позже\\.")
+            await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка при удалении поста. Пожалуйста, попробуй еще раз позже.")
     else:
-        await bot.send_message(user_telegram_id, "Удаление поста отменено\\.")
+        await bot.send_message(user_telegram_id, "Удаление поста отменено.")
     
     await state.finish()
 
@@ -2483,11 +2483,11 @@ async def cmd_cancel(message: types.Message, state: FSMContext):
     """
     current_state = await state.get_state()
     if current_state is None:
-        await message.reply("Нет активных операций для отмены\\.")
+        await message.reply("Нет активных операций для отмены.")
         return
 
     await state.finish()
-    await message.reply("Операция отменена\\.")
+    await message.reply("Операция отменена.")
 
 
 # --- Main execution ---
