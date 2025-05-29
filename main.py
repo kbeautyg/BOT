@@ -1,20 +1,23 @@
-import os, re, json, asyncio
+import os
+import re
+import json
+import uuid
+import zoneinfo
+import asyncio
+import asyncpg
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
-import zoneinfo
+
 from dotenv import load_dotenv
-from aiogram import Bot, Dispatcher, types
-from aiogram.utils import executor
-from aiogram.dispatcher import FSMContext
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.dispatcher.filters import Command
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import Command
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from supabase import create_client, Client
-import asyncpg
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-import uuid
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -22,53 +25,56 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 DATABASE_URL = os.getenv("SUPABASE_DB_URL")
 
-bot = Bot(token=BOT_TOKEN, parse_mode=types.ParseMode.HTML)
-dp = Dispatcher(bot, storage=MemoryStorage())
+bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+dp = Dispatcher(storage=MemoryStorage())
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-scheduler: AsyncIOScheduler | None = None
+scheduler: AsyncIOScheduler = None
 
-SCHEMA_SQL = """ -- (см. schema.sql выше, подставь по необходимости) """
+SCHEMA_SQL = """
+-- Скопируй сюда свой DDL schema.sql (см. выше)
+"""
+
+def _sb_sync(fn, *args, **kwargs):
+    return asyncio.get_event_loop().run_in_executor(None, lambda: fn(*args, **kwargs))
+async def sb_select(table: str, **eq_filter):
+    q = supabase.table(table).select("*")
+    for k, v in eq_filter.items(): q = q.eq(k, v)
+    return (await _sb_sync(q.execute))["data"]
+async def sb_insert(table: str, payload: dict):
+    return (await _sb_sync(supabase.table(table).insert(payload).execute))["data"][0]
+async def sb_update(table: str, match: dict, payload: dict):
+    q = supabase.table(table).update(payload)
+    for k, v in match.items(): q = q.eq(k, v)
+    return (await _sb_sync(q.execute))["data"]
+async def ensure_user(message: types.Message) -> dict:
+    tg_id = message.from_user.id
+    users = await sb_select("users", tg_id=tg_id)
+    if users: return users[0]
+    payload = {
+        "tg_id": tg_id,
+        "username": message.from_user.username,
+        "full_name": message.from_user.full_name,
+    }
+    return await sb_insert("users", payload)
 
 async def ensure_schema():
     if not DATABASE_URL: return
     conn = await asyncpg.connect(DATABASE_URL)
     try: await conn.execute(SCHEMA_SQL)
     finally: await conn.close()
-
-MIGRATE_PHASE5_SQL = """
-ALTER TABLE IF NOT EXISTS public.scheduled_posts
-    ADD COLUMN IF NOT EXISTS repeat_every interval,
-    ADD COLUMN IF NOT EXISTS meta jsonb;
-"""
+MIGRATE_PHASE5_SQL = """ALTER TABLE IF NOT EXISTS public.scheduled_posts ADD COLUMN IF NOT EXISTS repeat_every interval, ADD COLUMN IF NOT EXISTS meta jsonb;"""
 async def migrate_phase5():
     if not DATABASE_URL: return
     conn = await asyncpg.connect(DATABASE_URL)
     try: await conn.execute(MIGRATE_PHASE5_SQL)
     finally: await conn.close()
-
-MIGRATE_PHASE6_SQL = """
-CREATE TABLE IF NOT EXISTS public.user_project_access (
-    id            uuid        PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id       uuid        REFERENCES public.users(id)    ON DELETE CASCADE,
-    project_id    uuid        REFERENCES public.projects(id) ON DELETE CASCADE,
-    role          text        NOT NULL CHECK (role IN ('owner','editor')),
-    granted_at    timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (user_id, project_id)
-);
-CREATE INDEX IF NOT EXISTS upa_user_idx   ON public.user_project_access(user_id);
-CREATE INDEX IF NOT EXISTS upa_proja_idx  ON public.user_project_access(project_id);
-"""
+MIGRATE_PHASE6_SQL = """CREATE TABLE IF NOT EXISTS public.user_project_access (id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), user_id uuid REFERENCES public.users(id) ON DELETE CASCADE, project_id uuid REFERENCES public.projects(id) ON DELETE CASCADE, role text NOT NULL CHECK (role IN ('owner','editor')), granted_at timestamptz NOT NULL DEFAULT now(), UNIQUE (user_id, project_id));CREATE INDEX IF NOT EXISTS upa_user_idx ON public.user_project_access(user_id);CREATE INDEX IF NOT EXISTS upa_proja_idx ON public.user_project_access(project_id);"""
 async def migrate_phase6():
     if not DATABASE_URL: return
     conn = await asyncpg.connect(DATABASE_URL)
     try: await conn.execute(MIGRATE_PHASE6_SQL)
     finally: await conn.close()
-
-MIGRATE_PHASE7_SQL = """
-ALTER TABLE public.users
-    ADD COLUMN IF NOT EXISTS timezone text NOT NULL DEFAULT 'UTC',
-    ADD COLUMN IF NOT EXISTS notify_events boolean NOT NULL DEFAULT true;
-"""
+MIGRATE_PHASE7_SQL = """ALTER TABLE public.users ADD COLUMN IF NOT EXISTS timezone text NOT NULL DEFAULT 'UTC', ADD COLUMN IF NOT EXISTS notify_events boolean NOT NULL DEFAULT true;"""
 async def migrate_phase7():
     if not DATABASE_URL: return
     conn = await asyncpg.connect(DATABASE_URL)
@@ -687,3 +693,19 @@ if __name__ == "__main__":
     import logging
     logging.basicConfig(level=logging.INFO)
     executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+async def main():
+    await ensure_schema()
+    await migrate_phase5()
+    await migrate_phase6()
+    await migrate_phase7()
+    global scheduler
+    scheduler = AsyncIOScheduler(timezone=timezone.utc)
+    scheduler.start()
+    await load_pending_schedules()
+    # Запусти phase7_setup, remind_drafts и все фоновые таски, если есть
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    import logging
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(main())
