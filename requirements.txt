@@ -1,4 +1,4 @@
 aiogram>=3.5
 python-dotenv>=1.0
-supabase-py>=2.3
+supabase>=2.0
 asyncpg>=0.29
