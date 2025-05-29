@@ -1823,7 +1823,7 @@ async def repost_message_now(callback_query: types.CallbackQuery, state: FSMCont
     except Exception as e:
             logger.error(f"Error reposting message for user {user_telegram_id}: {e}")
             await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка при репосте сообщения. Пожалуйста, попробуй еще раз позже.")
-        finally:
+    finally:
             await state.finish()
 
 @dp.callback_query_handler(lambda c: c.data == 'repost_schedule', state=RepostStates.waiting_for_repost_options)
