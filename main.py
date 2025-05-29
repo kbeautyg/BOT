@@ -1639,9 +1639,9 @@ async def process_repost_channel_selection(callback_query: types.CallbackQuery, 
         await RepostStates.waiting_for_repost_options.set()
 
     except Exception as e:
-    logger.error(f"Error in process_repost_channel_selection: {e}")
-    await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка. Пожалуйста, попробуй ещё раз позже.")
-    await state.finish()
+        logger.error(f"Error in process_repost_channel_selection: {e}")
+        await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка. Пожалуйста, попробуй ещё раз позже.")
+        await state.finish()
 
 @dp.callback_query_handler(lambda c: c.data == 'repost_add_text', state=RepostStates.waiting_for_repost_options)
 async def repost_add_text_prompt(callback_query: types.CallbackQuery, state: FSMContext):
@@ -1789,7 +1789,7 @@ async def repost_message_now(callback_query: types.CallbackQuery, state: FSMCont
         else:
             await bot.send_message(user_telegram_id, "Не удалось репостнуть сообщение. Произошла ошибка.")
 
-        except Exception as e:
+    except Exception as e:
             logger.error(f"Error reposting message for user {user_telegram_id}: {e}")
             await bot.send_message(user_telegram_id, "Произошла непредвиденная ошибка при репосте сообщения. Пожалуйста, попробуй еще раз позже.")
         finally:
