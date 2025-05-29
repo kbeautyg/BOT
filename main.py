@@ -10,6 +10,7 @@ from collections import defaultdict
 
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types, F
+from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
