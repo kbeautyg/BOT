@@ -337,16 +337,19 @@ async def cmd_send_now(message: types.Message):
 
 @dp.message_handler(Command("schedule_post"))
 async def cmd_schedule(message: types.Message):
-    try:
-        *_, post_id, date_str, time_str, *tail = message.text.split()
-    except ValueError:
+    parts = message.text.split()
+    if len(parts) < 4:
         await message.reply("Использование:\n/schedule_post <post_id> <YYYY-MM-DD> <HH:MM> [loop=<минут>]")
         return
+    # Первый элемент — команда, дальше нужные аргументы
+    _, post_id, date_str, time_str = parts[:4]
+    tail = parts[4:]
     try:
         dt = datetime.fromisoformat(f"{date_str} {time_str}")
     except Exception:
         await message.reply("Дата/время не распознана.")
         return
+
     repeat = None
     for t in tail:
         if t.startswith("loop="):
