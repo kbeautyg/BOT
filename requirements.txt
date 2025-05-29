@@ -1,3 +1,4 @@
+apscheduler
 aiogram>=3.5
 python-dotenv>=1.0
 supabase>=2.0
