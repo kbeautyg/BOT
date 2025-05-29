@@ -110,14 +110,12 @@ async def ensure_user(message: types.Message) -> dict:
 
 class AddChannelFSM(StatesGroup):
     waiting_for_channel_id = State()
-@dp.message_handler(Command("add_channel"), state="*")
-async def add_channel_start(message: types.Message, state: FSMContext):
+@dp.message(Command("add_channel"), "*")async def add_channel_start(message: types.Message, state: FSMContext):
     await ensure_user(message)
     await message.answer(
         "Добавьте этого бота админом в канал. Перешлите сообщение из канала или его ID.")
     await AddChannelFSM.waiting_for_channel_id.set()
-@dp.message_handler(state=AddChannelFSM.waiting_for_channel_id, content_types=types.ContentTypes.ANY)
-async def add_channel_finish(message: types.Message, state: FSMContext):
+@dp.message(AddChannelFSM.waiting_for_channel_id, content_types=types.ContentTypes.ANY)async def add_channel_finish(message: types.Message, state: FSMContext):
     await ensure_user(message)
     chan_id = None
     if message.forward_from_chat:
@@ -153,18 +151,15 @@ async def add_channel_finish(message: types.Message, state: FSMContext):
 class AddProjectFSM(StatesGroup):
     waiting_for_name        = State()
     waiting_for_description = State()
-@dp.message_handler(Command("add_project"), state="*")
-async def add_project_start(message: types.Message, state: FSMContext):
+@dp.message(Command("add_project"), "*")async def add_project_start(message: types.Message, state: FSMContext):
     await ensure_user(message)
     await message.answer("Введите название проекта:")
     await AddProjectFSM.waiting_for_name.set()
-@dp.message_handler(state=AddProjectFSM.waiting_for_name)
-async def add_project_name(message: types.Message, state: FSMContext):
+@dp.message(AddProjectFSM.waiting_for_name)async def add_project_name(message: types.Message, state: FSMContext):
     await state.update_data(name=message.text.strip())
     await message.answer("Введите описание (или «-» чтобы пропустить):")
     await AddProjectFSM.waiting_for_description.set()
-@dp.message_handler(state=AddProjectFSM.waiting_for_description)
-async def add_project_finish(message: types.Message, state: FSMContext):
+@dp.message(AddProjectFSM.waiting_for_description)async def add_project_finish(message: types.Message, state: FSMContext):
     data = await state.get_data()
     desc = None if message.text.strip() == "-" else message.text.strip()
     user = await ensure_user(message)
@@ -176,8 +171,7 @@ async def add_project_finish(message: types.Message, state: FSMContext):
     await message.answer(f"Проект {project['name']} создан!")
     await state.finish()
 
-@dp.message_handler(Command("projects"))
-async def list_projects(message: types.Message):
+@dp.message(Command("projects"))async def list_projects(message: types.Message):
     user = await ensure_user(message)
     projects = await sb_select("projects", owner_id=user["id"])
     if not projects:
@@ -187,8 +181,7 @@ async def list_projects(message: types.Message):
         f"• <code>{p['id'][:8]}</code> — {p['name']}" for p in projects
     )
     await message.answer(text)
-@dp.message_handler(Command("channels"))
-async def list_channels(message: types.Message):
+@dp.message(Command("channels"))async def list_channels(message: types.Message):
     user = await ensure_user(message)
     access_rows = await sb_select("user_channel_access", user_id=user["id"])
     if not access_rows:
@@ -212,13 +205,11 @@ async def list_channels(message: types.Message):
 class MoveChannelFSM(StatesGroup):
     waiting_for_channel_id = State()
     waiting_for_project_id = State()
-@dp.message_handler(Command("move_channel"), state="*")
-async def move_channel_start(message: types.Message, state: FSMContext):
+@dp.message(Command("move_channel"), "*")async def move_channel_start(message: types.Message, state: FSMContext):
     await ensure_user(message)
     await message.answer("ID канала для перемещения:")
     await MoveChannelFSM.waiting_for_channel_id.set()
-@dp.message_handler(state=MoveChannelFSM.waiting_for_channel_id)
-async def move_channel_get_channel(message: types.Message, state: FSMContext):
+@dp.message(MoveChannelFSM.waiting_for_channel_id)async def move_channel_get_channel(message: types.Message, state: FSMContext):
     text = message.text.strip()
     if not re.fullmatch(r"-?\d{5,}", text):
         await message.answer("Формат неверный.")
@@ -226,8 +217,7 @@ async def move_channel_get_channel(message: types.Message, state: FSMContext):
     await state.update_data(chan_tg_id=int(text))
     await message.answer("ID проекта (первые 8 символов):")
     await MoveChannelFSM.waiting_for_project_id.set()
-@dp.message_handler(state=MoveChannelFSM.waiting_for_project_id)
-async def move_channel_finish(message: types.Message, state: FSMContext):
+@dp.message(MoveChannelFSM.waiting_for_project_id)async def move_channel_finish(message: types.Message, state: FSMContext):
     data = await state.get_data()
     proj_prefix = message.text.strip()
     all_projects = await sb_select("projects")
@@ -331,8 +321,7 @@ async def load_pending_schedules():
         else:
             schedule_row(r)
 
-@dp.message_handler(Command("send_now"))
-async def cmd_send_now(message: types.Message):
+@dp.message(Command("send_now"))async def cmd_send_now(message: types.Message):
     parts = message.text.split()
     if len(parts) != 2:
         await message.reply("Использование: /send_now <post_id>")
@@ -345,8 +334,7 @@ async def cmd_send_now(message: types.Message):
     await publish_post(posts[0])
     await message.reply("✅ Пост отправлен.")
 
-@dp.message_handler(Command("schedule_post"))
-async def cmd_schedule(message: types.Message):
+@dp.message(Command("schedule_post"))async def cmd_schedule(message: types.Message):
     parts = message.text.split()
     if len(parts) < 4:
         await message.reply("Использование:\n/schedule_post <post_id> <YYYY-MM-DD> <HH:MM> [loop=<минут>]")
@@ -368,8 +356,7 @@ async def cmd_schedule(message: types.Message):
     schedule_row(row)
     await message.reply("✅ Запланировано.")
 
-@dp.message_handler(Command("copy_post"))
-async def cmd_copy(message: types.Message):
+@dp.message(Command("copy_post"))async def cmd_copy(message: types.Message):
     parts = message.text.split()
     if len(parts) != 2:
         await message.reply("Использование: /copy_post <post_id>")
@@ -421,13 +408,11 @@ def require_owner_channel(arg_pos: int = 0):
         return wrapper
     return decorator
 
-@dp.message_handler(Command("add_user"), state="*")
-async def add_user_start(message: types.Message, state: FSMContext):
+@dp.message(Command("add_user"), "*")async def add_user_start(message: types.Message, state: FSMContext):
     await ensure_user(message)
     await message.answer("Куда добавить пользователя?\nОтветьте «channel» или «project».")
     await AddUserFSM.choose_scope.set()
-@dp.message_handler(state=AddUserFSM.choose_scope)
-async def add_user_scope(message: types.Message, state: FSMContext):
+@dp.message(AddUserFSM.choose_scope)async def add_user_scope(message: types.Message, state: FSMContext):
     scope = message.text.strip().lower()
     if scope not in ("channel", "project"):
         await message.answer("Введите «channel» или «project»")
@@ -435,18 +420,15 @@ async def add_user_scope(message: types.Message, state: FSMContext):
     await state.update_data(scope=scope)
     await message.answer("ID канала (-100...) или первые 8 символов ID проекта:")
     await AddUserFSM.scope_id.set()
-@dp.message_handler(state=AddUserFSM.scope_id)
-async def add_user_scope_id(message: types.Message, state: FSMContext):
+@dp.message(AddUserFSM.scope_id)async def add_user_scope_id(message: types.Message, state: FSMContext):
     await state.update_data(scope_id=message.text.strip())
     await message.answer("Введите username пользователя (без @):")
     await AddUserFSM.username.set()
-@dp.message_handler(state=AddUserFSM.username)
-async def add_user_username(message: types.Message, state: FSMContext):
+@dp.message(AddUserFSM.username)async def add_user_username(message: types.Message, state: FSMContext):
     await state.update_data(username=message.text.strip().lstrip("@"))
     await message.answer("Назначьте роль: owner / editor")
     await AddUserFSM.choose_role.set()
-@dp.message_handler(state=AddUserFSM.choose_role)
-async def add_user_role(message: types.Message, state: FSMContext):
+@dp.message(AddUserFSM.choose_role)async def add_user_role(message: types.Message, state: FSMContext):
     role = message.text.strip().lower()
     if role not in ("owner", "editor"):
         await message.answer("Роль должна быть owner или editor.")
@@ -498,8 +480,7 @@ async def add_user_finalize(message: types.Message, data: dict):
         })
         await message.answer("Пользователь добавлен к проекту.")
 
-@dp.message_handler(Command("invite"))
-async def cmd_invite(message: types.Message):
+@dp.message(Command("invite"))async def cmd_invite(message: types.Message):
     parts = message.text.split()
     if len(parts) != 4 or parts[1] not in ("channel", "project"):
         await message.reply("Использование:\n/invite channel <tg_id> <role>\n/invite project <proj_prefix> <role>")
@@ -525,8 +506,7 @@ async def cmd_invite(message: types.Message):
     deep_link = f"https://t.me/{(await bot.me()).username}?start={inv_token}"
     await message.reply(f"Приглашение:\n{deep_link}\nОтправьте ссылку пользователю.")
 
-@dp.message_handler(Command("start"))
-async def cmd_start(message: types.Message):
+@dp.message(Command("start"))async def cmd_start(message: types.Message):
     await ensure_user(message)
     parts = message.get_args().split()
     if not parts:
@@ -574,8 +554,7 @@ def tz_of(user_row: dict) -> zoneinfo.ZoneInfo:
 def local_to_utc(local_dt: datetime, user_row: dict) -> datetime:
     tz = tz_of(user_row)
     return local_dt.replace(tzinfo=tz).astimezone(timezone.utc)
-@dp.message_handler(Command("set_tz"))
-async def cmd_set_tz(message: types.Message):
+@dp.message(Command("set_tz"))async def cmd_set_tz(message: types.Message):
     parts = message.get_args().split()
     if not parts:
         await message.reply("Использование:\n/set_tz <Europe/Amsterdam>")
@@ -589,13 +568,11 @@ async def cmd_set_tz(message: types.Message):
     user = await ensure_user(message)
     await sb_update("users", {"id": user["id"]}, {"timezone": tz_name})
     await message.reply(f"Часовой пояс установлен: {tz_name}")
-@dp.message_handler(Command("my_tz"))
-async def cmd_my_tz(message: types.Message):
+@dp.message(Command("my_tz"))async def cmd_my_tz(message: types.Message):
     user = await ensure_user(message)
     await message.reply(f"Ваш TZ: {user.get('timezone', 'UTC')}")
 
-@dp.message_handler(Command("story"))
-async def cmd_story(message: types.Message):
+@dp.message(Command("story"))async def cmd_story(message: types.Message):
     parts = message.text.split()
     if len(parts) != 2:
         await message.reply("Использование: /story <post_id>")
@@ -615,8 +592,7 @@ async def cmd_story(message: types.Message):
     except Exception as e:
         await message.reply(f"Ошибка публикации сторис: {e}")
 
-@dp.message_handler(Command("repost"))
-@require_owner_channel(2)
+@dp.message(Command("repost"))@require_owner_channel(2)
 async def cmd_repost(message: types.Message):
     parts = message.text.split()
     if len(parts) != 4:
@@ -634,8 +610,7 @@ async def cmd_repost(message: types.Message):
     except Exception as e:
         await message.reply(f"Не удалось репостнуть: {e}")
 
-@dp.message_handler(Command("scheduled"))
-async def cmd_scheduled(message: types.Message):
+@dp.message(Command("scheduled"))async def cmd_scheduled(message: types.Message):
     user = await ensure_user(message)
     acc = await sb_select("user_channel_access", user_id=user["id"])
     chan_ids = [a["channel_id"] for a in acc]
@@ -675,8 +650,7 @@ async def phase7_setup():
     while scheduler is None: await asyncio.sleep(0.2)
     scheduler.add_job(remind_drafts, trigger=IntervalTrigger(days=1, start_date=datetime.utcnow().replace(hour=9, minute=0, second=0, microsecond=0) + timedelta(days=1)), id="remind_drafts", coalesce=True)
 
-@dp.message_handler(Command("cancel"), state='*')
-async def cancel_cmd(message: types.Message, state: FSMContext):
+@dp.message(Command("cancel"), '*')async def cancel_cmd(message: types.Message, state: FSMContext):
     if await state.get_state() is None:
         return
     await state.finish()
