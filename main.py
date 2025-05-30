@@ -12,13 +12,6 @@ from aiogram.utils import executor
 from supabase import create_client, Client
 from aiogram.utils.exceptions import ChatNotFound, ChatAdminRequired, BadRequest
 
-async def on_startup(dp):
-    await bot.delete_webhook(drop_pending_updates=True)
-
-if __name__ == "__main__":
-    from aiogram import executor
-    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
-
 
 logging.basicConfig(level=logging.INFO)
 
@@ -33,6 +26,13 @@ bot = Bot(token=API_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+async def on_startup(dp):
+    await bot.delete_webhook(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    from aiogram import executor
+    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
 
 # In-memory cache for user data
 user_cache = {}
