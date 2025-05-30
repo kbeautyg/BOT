@@ -1,7 +1,4 @@
-# requirements.txt — зависимости бота
-aiohttp==3.9.5 
-aiogram==2.25.2        # Telegram Bot API framework (используется Dispatcher, FSM, executor)
-supabase>=2.0.0     # клиентская библиотека для Supabase/PostgREST
-httpx==0.27.0          # HTTP-клиент, зависимость supabase-py
-python-dotenv==1.0.1   # чтение переменных из .env (при необходимости)
-pytz==2024.1           # работа с часовыми поясами
+aiogram==2.25.2
+supabase>=2.0.0
+python-dotenv>=1.0
+pytz>=2024.1
