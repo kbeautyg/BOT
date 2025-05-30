@@ -674,7 +674,16 @@ async def cb_publish_post(call: types.CallbackQuery):
     post = res.data[0]
     channel_id = post["channel_id"]
     user_id = user_cache[tg_id]["id"]
+
+    # --- Добавьте эти строки для отладки ---
+    logging.info(f"Attempting to publish post {post_id} to channel {channel_id}")
+    logging.info(f"User TG ID: {tg_id}, User DB ID: {user_id}")
+    
     res_role = supabase.table("channel_editors").select("role").eq("channel_id", channel_id).eq("user_id", user_id).execute()
+    
+    logging.info(f"Supabase role query result: {res_role.data}")
+    # --- Конец отладочных строк ---
+
     if not res_role.data or res_role.data[0]["role"] not in ["owner", "editor"]:
         await call.answer(TEXTS["no_permission"][lang], show_alert=True)
         return
