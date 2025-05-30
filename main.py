@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, ContentType
 from aiogram.dispatcher import FSMContext
@@ -20,7 +21,8 @@ if not API_TOKEN or not SUPABASE_URL or not SUPABASE_KEY:
     raise Exception("Missing BOT_TOKEN or Supabase configuration.")
 
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher(bot)
+storage = MemoryStorage()
+dp = Dispatcher(bot, storage=storage)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # In-memory cache for user data
