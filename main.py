@@ -683,7 +683,10 @@ async def cb_publish_post(call: types.CallbackQuery):
     
     logging.info(f"Supabase role query result: {res_role.data}")
     # --- Конец отладочных строк ---
-
+tg_chat_id = supabase.table("channels") \
+                     .select("channel_id") \
+                     .eq("id", post["channel_id"]) \
+                     .execute().data[0]["channel_id"]
     if not res_role.data or res_role.data[0]["role"] not in ["owner", "editor"]:
         await call.answer(TEXTS["no_permission"][lang], show_alert=True)
         return
