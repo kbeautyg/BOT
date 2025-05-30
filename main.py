@@ -30,10 +30,6 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 async def on_startup(dp):
     await bot.delete_webhook(drop_pending_updates=True)
 
-if __name__ == "__main__":
-    from aiogram import executor
-    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
-
 # In-memory cache for user data
 user_cache = {}
 
@@ -1150,4 +1146,6 @@ async def cb_set_language(call: types.CallbackQuery):
     await bot.send_message(call.from_user.id, TEXTS["language_changed"][new_lang], reply_markup=main_menu_keyboard(new_lang))
 
 if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True)
+    from aiogram import executor
+    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+
