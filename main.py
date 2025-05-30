@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import asyncio
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, ContentType
@@ -10,6 +11,14 @@ from aiogram.dispatcher.middlewares import BaseMiddleware
 from aiogram.utils import executor
 from supabase import create_client, Client
 from aiogram.utils.exceptions import ChatNotFound, ChatAdminRequired, BadRequest
+
+async def on_startup(dp):
+    await bot.delete_webhook(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    from aiogram import executor
+    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+
 
 logging.basicConfig(level=logging.INFO)
 
