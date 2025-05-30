@@ -354,57 +354,103 @@ class DBMiddleware(BaseMiddleware):
             user = update.message.from_user
         elif update.callback_query:
             user = update.callback_query.from_user
+        elif update.inline_query: # Consider other update types if your bot uses them
+             user = update.inline_query.from_user
+        # Add other update types (e.g., chosen_inline_result, shipping_query, pre_checkout_query)
+        # if they need user registration logic.
 
         if user and user.id:
             tg_id = user.id
-            username = user.username
-            name = user.first_name
-            if user.last_name:
-                name += " " + user.last_name
-            if username:
-                 name = "@" + username # Prefer @username if available
+
+            # --- Измененный блок: Надежное извлечение имени ---
+            name = user.full_name # Попробуем полное имя сначала
+            if not name: # Если полное имя отсутствует или пустое
+                name = user.first_name # Попробуем имя
+                if user.last_name: # Если есть фамилия, добавим ее
+                    if name:
+                         name += " " + user.last_name
+                    else:
+                         name = user.last_name # Или только фамилия, если имени нет
+            if not name: # Если полное имя и комбинация имени+фамилии не дали результата
+                 name = user.username # Попробуем username как последний вариант
+            
+            # Если даже username отсутствует, присваиваем значение по умолчанию
+            # ЭТО КРИТИЧНО, ЕСЛИ СТОЛБЕЦ name В БД - NOT NULL
+            if not name:
+                 name = f"Пользователь_{tg_id}"
+            # --- Конец измененного блока ---
+
 
             user_record = user_cache.get(tg_id)
 
             if not user_record:
                 # Try fetching from DB using tg_id
-                # Использование tg_id для поиска пользователя
                 res = supabase.table("users").select("*").eq("tg_id", tg_id).execute()
                 if res.data:
                     user_record = res.data[0]
-                    # Update name in DB if changed
+                    # Update name in DB if changed (and if new name is not empty/None, depending on DB constraint)
                     # Обновление имени пользователя по его Supabase ID
-                    if user_record.get("name") != name: # Use get for safety
+                    # --- Измененный блок: Обновление имени ---
+                    # Сравниваем текущее имя в БД с новым из апдейта
+                    # Обновляем только если новое имя отличается и оно не пустое
+                    # Если столбец NOT NULL, name уже имеет значение по умолчанию, даже если API не вернул имя.
+                    current_db_name = user_record.get("name")
+                    if current_db_name != name:
+                         # Убедимся, что новое имя не пустая строка перед обновлением, если это имеет смысл
+                         # (для NOT NULL это всегда будет строка, но для NULL возможно)
+                         # Если столбец NOT NULL, то `name` гарантированно строка здесь.
                          supabase.table("users").update({"name": name}).eq("id", user_record["id"]).execute()
                          user_record["name"] = name # Update cached version too
+                    # --- Конец измененного блока ---
+
                     user_cache[tg_id] = user_record # Cache the full record
                 else:
-                    # Insert new user with tg_id
-                    # Вставка нового пользователя, включая tg_id
-                    res_insert = supabase.table("users").insert({"tg_id": tg_id, "name": name}).execute()
-                    if res_insert.data:
-                        user_record = res_insert.data[0]
-                        user_cache[tg_id] = user_record # Cache new record
-                        logger.info(f"New user registered: {tg_id} ({name})")
-                    else:
-                        logger.error(f"Failed to insert new user {tg_id}: {res_insert.error}")
-                        # Cannot proceed without a user record
-                        return
+                    # Insert new user with tg_id and name
+                    # Вставка нового пользователя, включая tg_id и name
+                    # Переменная 'name' на этом этапе гарантированно содержит строку (для NOT NULL)
+                    # или строку/None (для NULL)
+                    # --- Измененный блок: Вставка нового пользователя ---
+                    try:
+                         res_insert = supabase.table("users").insert({"tg_id": tg_id, "name": name}).execute()
+                         if res_insert.data:
+                             user_record = res_insert.data[0]
+                             user_cache[tg_id] = user_record # Cache new record
+                             logger.info(f"New user registered: {tg_id} ({name})")
+                         else:
+                             # Это может произойти, если есть ошибка в запросе к Supabase,
+                             # например, нарушение ограничений или проблема с кешем схемы PostgREST
+                             logger.error(f"Failed to insert new user {tg_id} with name '{name}': {res_insert.error}")
+                             # Cannot proceed without a user record
+                             user_record = None # Ensure user_record is None to trigger error handling below
+                    except Exception as e:
+                         logger.error(f"Exception during new user insertion for {tg_id} with name '{name}': {e}")
+                         # Handle potential exceptions during DB insertion
+                         user_record = None
+
+                    # --- Конец измененного блока ---
 
             if user_record:
-                # Передача Supabase ID пользователя в data для использования в хэндлерах
+                # Передача Supabase ID пользователя и других данных в data
                 data["user_id"] = user_record["id"]
+                # Используем .get() для безопасности доступа к ключам, которые могли быть не установлены при старой схеме
                 data["lang"] = user_record.get("language", "ru")
                 data["timezone"] = user_record.get("timezone", "UTC") # Default to UTC if not set
             else:
-                 logger.error(f"User record is None after DB check/insert for tg_id {tg_id}")
+                 # Критическая ошибка: не удалось получить или создать запись пользователя в БД
+                 logger.error(f"User record is None after DB check/insert for tg_id {tg_id}. Cannot proceed.")
                  # Handle critical error - cannot proceed for this user
                  # Attempt to notify the user and consume the update
                  try:
+                      # Используем lang из кэша или дефолтное значение для сообщения об ошибке
+                      error_lang = user_cache.get(tg_id, {}).get("language", "ru")
                       if update.message:
-                          await bot.send_message(tg_id, "Произошла внутренняя ошибка при идентификации пользователя. Пожалуйста, попробуйте позже." if user_record.get("language", "ru") == "ru" else "An internal error occurred while identifying the user. Please try again later.")
+                          await bot.send_message(tg_id, "Произошла внутренняя ошибка при идентификации пользователя. Пожалуйста, попробуйте позже." if error_lang == "ru" else "An internal error occurred while identifying the user. Please try again later.")
                       elif update.callback_query:
                            await bot.answer_callback_query(update.callback_query.id, "Произошла внутренняя ошибка.", show_alert=True)
+                      elif update.inline_query:
+                           # Handle inline query error response if applicable
+                           pass # Or answer inline query with an error message
+
                  except Exception as e:
                      logger.error(f"Failed to send error message to user {tg_id}: {e}")
 
