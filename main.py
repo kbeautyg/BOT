@@ -3094,11 +3094,16 @@ async def handle_unknown_callback_in_state(call: types.CallbackQuery, lang: str)
      await call.answer("Неожиданное действие." if lang == "ru" else "Unexpected action.", show_alert=True)
      # No state transition needed, stay in the current state.
 
-
-async def on_startup(dp): 
+async def on_startup(dp):                        # оставить один вариант
   await bot.delete_webhook(drop_pending_updates=True)
   scheduler.start()
   await load_scheduled_posts()
-  logger.info("Бот запущен и планировщик загружен.")
-  if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+  logger.info("Bot started and scheduler loaded.")
+dp.middleware.setup(DBMiddleware())
+
+if __name__ == "__main__":
+  executor.start_polling(
+      dp,
+      skip_updates=True,
+      on_startup=on_startup
+    )
