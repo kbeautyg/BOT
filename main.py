@@ -1246,23 +1246,25 @@ dp.include_router(projects_router)
 dp.include_router(posts_router)
 
 @dp.errors()
-async def error_handler(update, error):
+async def error_handler(update, exception): # Changed 'error' to 'exception'
     try:
         msg = getattr(update, "message", None) or getattr(update, "callback_query", None)
         user_id = msg.from_user.id if msg else None
         
-        logging.error(f"Update: {update} caused error: {error}", exc_info=True)
+        logging.error(f"Update: {update} caused error: {exception}", exc_info=True) # Use 'exception' here
         
         if user_id:
             u = db.get_user(user_id)
             lang = u["language"] if u else "ru"
-            error_message = f"{TEXTS[lang]['error']}: {error}"
-            if "A request to the Telegram API was unsuccessful" in str(error):
+            error_message = f"{TEXTS[lang]['error']}: {exception}"
+            if "A request to the Telegram API was unsuccessful" in str(exception):
                 error_message = f"{TEXTS[lang]['error']}: Произошла ошибка при взаимодействии с Telegram API. Возможно, бот не является администратором канала или канал недоступен."
-            elif "Bad Request: chat not found" in str(error):
+            elif "Bad Request: chat not found" in str(exception):
                 error_message = f"{TEXTS[lang]['error']}: Канал не найден. Убедитесь, что ID канала верен и бот добавлен в канал."
-            elif "Forbidden: bot was blocked by the user" in str(error):
+            elif "Forbidden: bot was blocked by the user" in str(exception):
                 error_message = f"{TEXTS[lang]['error']}: Бот был заблокирован пользователем. Пожалуйста, разблокируйте бота."
+            elif "Conflict: terminated by other getUpdates request" in str(exception):
+                error_message = f"{TEXTS[lang]['error']}: Обнаружен конфликт. Убедитесь, что запущен только один экземпляр бота."
             
             if msg:
                 await msg.answer(error_message)
