@@ -468,6 +468,10 @@ async def button_text_received(message: types.Message, state: FSMContext):
     lambda m: m.text and m.text.lower().strip() in ["/skip", "скип", "пропустить"],
     state=PostStates.waiting_for_button_text
 )
+@dp.message_handler(
+    lambda m: m.text and m.text.lower().strip() in ["/skip", "скип", "пропустить"],
+    state=PostStates.waiting_for_button_text
+)
 async def skip_buttons(message: types.Message, state: FSMContext):
     data = await state.get_data()
     channel_id = data.get("channel_id")
@@ -486,7 +490,8 @@ async def skip_buttons(message: types.Message, state: FSMContext):
     }).execute()
     tg_id = message.from_user.id
     lang = user_cache[tg_id]["lang"]
-    await message.reply(TEX
+    await message.reply(TEXTS["draft_saved"][lang], reply_markup=main_menu_keyboard(lang))
+    await state.finish()
 
 
 @dp.message_handler(content_types=ContentType.TEXT, state=PostStates.waiting_for_button_url)
