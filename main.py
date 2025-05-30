@@ -3095,11 +3095,10 @@ async def handle_unknown_callback_in_state(call: types.CallbackQuery, lang: str)
      # No state transition needed, stay in the current state.
 
 
-async def on_startup(dp):
-
-await bot.delete_webhook(drop_pending_updates=True)
-scheduler.start()
-await load_scheduled_posts()
-logger.info("Бот запущен и планировщик загружен.")
-if __name__ == "__main__":
-executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+async def on_startup(dp): 
+  await bot.delete_webhook(drop_pending_updates=True)
+  scheduler.start()
+  await load_scheduled_posts()
+  logger.info("Бот запущен и планировщик загружен.")
+  if __name__ == "__main__":
+    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
