@@ -355,6 +355,13 @@ async def cb_select_channel(call: types.CallbackQuery, state: FSMContext):
     await PostStates.waiting_for_text.set()
     await bot.send_message(call.from_user.id, TEXTS["enter_post_text"][lang])
 
+async def skip_post_text(message: types.Message, state: FSMContext):
+    await state.update_data(content="")
+    await PostStates.waiting_for_media.set()
+    tg_id = message.from_user.id
+    lang = user_cache[tg_id]["lang"]
+    await message.reply(TEXTS["enter_post_media"][lang])
+
 @dp.message_handler(content_types=ContentType.TEXT, state=PostStates.waiting_for_text)
 async def post_text_received(message: types.Message, state: FSMContext):
     text = message.text
@@ -370,13 +377,13 @@ async def post_text_received(message: types.Message, state: FSMContext):
     lambda m: m.text and m.text.lower().strip() in ["/skip", "скип", "пропустить"],
     state=PostStates.waiting_for_text
 )
-async def skip_post_text(message: types.Message, state: FSMContext):
-    await state.update_data(content="")
-    await PostStates.waiting_for_media.set()
+
+async def skip_post_media(message: types.Message, state: FSMContext):
+    await state.update_data(media_type=None, media_file_id=None)
+    await PostStates.waiting_for_button_text.set()
     tg_id = message.from_user.id
     lang = user_cache[tg_id]["lang"]
-    await message.reply(TEXTS["enter_post_media"][lang])
-
+    await message.reply(TEXTS["enter_button_text"][lang])
 
 @dp.message_handler(content_types=[ContentType.PHOTO, ContentType.VIDEO, ContentType.DOCUMENT, ContentType.AUDIO, ContentType.ANIMATION], state=PostStates.waiting_for_text)
 async def post_text_media_received(message: types.Message, state: FSMContext):
@@ -445,12 +452,27 @@ async def wrong_media_input(message: types.Message, state: FSMContext):
     lambda m: m.text and m.text.lower().strip() in ["/skip", "скип", "пропустить"],
     state=PostStates.waiting_for_media
 )
-async def skip_post_media(message: types.Message, state: FSMContext):
-    await state.update_data(media_type=None, media_file_id=None)
-    await PostStates.waiting_for_button_text.set()
+
+async def skip_buttons(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    channel_id = data.get("channel_id")
+    user_id = user_cache[message.from_user.id]["id"]
+    content = data.get("content", "")
+    media_type = data.get("media_type")
+    media_file_id = data.get("media_file_id")
+    supabase.table("posts").insert({
+        "channel_id": channel_id,
+        "user_id": user_id,
+        "content": content,
+        "media_type": media_type if media_type else None,
+        "media_file_id": media_file_id if media_file_id else None,
+        "buttons_json": None,
+        "status": "draft"
+    }).execute()
     tg_id = message.from_user.id
     lang = user_cache[tg_id]["lang"]
-    await message.reply(TEXTS["enter_button_text"][lang])
+    await message.reply(TEXTS["draft_saved"][lang], reply_markup=main_menu_keyboard(lang))
+    await state.finish()
 
 @dp.message_handler(content_types=ContentType.TEXT, state=PostStates.waiting_for_button_text)
 async def button_text_received(message: types.Message, state: FSMContext):
@@ -472,26 +494,6 @@ async def button_text_received(message: types.Message, state: FSMContext):
     lambda m: m.text and m.text.lower().strip() in ["/skip", "скип", "пропустить"],
     state=PostStates.waiting_for_button_text
 )
-async def skip_buttons(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    channel_id = data.get("channel_id")
-    user_id = user_cache[message.from_user.id]["id"]
-    content = data.get("content", "")
-    media_type = data.get("media_type")
-    media_file_id = data.get("media_file_id")
-    supabase.table("posts").insert({
-        "channel_id": channel_id,
-        "user_id": user_id,
-        "content": content,
-        "media_type": media_type if media_type else None,
-        "media_file_id": media_file_id if media_file_id else None,
-        "buttons_json": None,
-        "status": "draft"
-    }).execute()
-    tg_id = message.from_user.id
-    lang = user_cache[tg_id]["lang"]
-    await message.reply(TEXTS["draft_saved"][lang], reply_markup=main_menu_keyboard(lang))
-    await state.finish()
 
 
 @dp.message_handler(content_types=ContentType.TEXT, state=PostStates.waiting_for_button_url)
