@@ -367,17 +367,20 @@ class DBMiddleware(BaseMiddleware):
             user_record = user_cache.get(tg_id)
 
             if not user_record:
-                # Try fetching from DB
+                # Try fetching from DB using tg_id
+                # Использование tg_id для поиска пользователя
                 res = supabase.table("users").select("*").eq("tg_id", tg_id).execute()
                 if res.data:
                     user_record = res.data[0]
                     # Update name in DB if changed
+                    # Обновление имени пользователя по его Supabase ID
                     if user_record.get("name") != name: # Use get for safety
                          supabase.table("users").update({"name": name}).eq("id", user_record["id"]).execute()
                          user_record["name"] = name # Update cached version too
                     user_cache[tg_id] = user_record # Cache the full record
                 else:
-                    # Insert new user
+                    # Insert new user with tg_id
+                    # Вставка нового пользователя, включая tg_id
                     res_insert = supabase.table("users").insert({"tg_id": tg_id, "name": name}).execute()
                     if res_insert.data:
                         user_record = res_insert.data[0]
@@ -389,6 +392,7 @@ class DBMiddleware(BaseMiddleware):
                         return
 
             if user_record:
+                # Передача Supabase ID пользователя в data для использования в хэндлерах
                 data["user_id"] = user_record["id"]
                 data["lang"] = user_record.get("language", "ru")
                 data["timezone"] = user_record.get("timezone", "UTC") # Default to UTC if not set
@@ -1298,7 +1302,7 @@ async def send_post_preview(chat_id: int, state: FSMContext, lang: str):
             except TelegramAPIError as e:
                  logger.error(f"Error sending media preview: {e}")
                  # Fallback to sending text only or show error
-                 fallback_text = f"{send_text}\n\n*Ошибка при отправке медиа.*" if lang == "ru" else f"{send_text}\n\n*Error sending media.*"
+                 fallback_text = f"{send_text or send_caption}\n\n*Ошибка при отправке медиа.*" if lang == "ru" else f"{send_text or send_caption}\n\n*Error sending media.*"
                  # Truncate fallback text if necessary
                  if len(fallback_text) > 4096: fallback_text = fallback_text[:4093] + "..."
                  sent_msg = await bot.send_message(chat_id, fallback_text, reply_markup=combined_kb, parse_mode="Markdown")
@@ -1477,6 +1481,9 @@ async def cb_confirm_publish(call: types.CallbackQuery, state: FSMContext, lang:
                       if current_caption_or_text is None: # If no caption, it was a text message
                            current_caption_or_text = (await bot.copy_message(call.message.chat.id, call.message.chat.id, preview_msg_id)).text
                       new_content = (current_caption_or_text or "") + ("\n\n*Опубликовано*" if lang=="ru" else "\n\n*Published*")
+                      media_type = data.get("media_type")
+                      media_file_id = data.get("media_file_id")
+
                       if media_type and media_file_id: # Edit caption
                            if len(new_content) > 1024: new_content = new_content[:1021] + "..."
                            await bot.edit_message_caption(chat_id=call.message.chat.id, message_id=preview_msg_id, caption=new_content, parse_mode="Markdown")
@@ -1495,7 +1502,7 @@ async def cb_confirm_publish(call: types.CallbackQuery, state: FSMContext, lang:
         logger.error(f"Telegram API permissions/chat error publishing post to {tg_channel_id}: {e}")
         await call.answer(TEXTS["not_admin"][lang], show_alert=True) # Reuse not_admin text for general sending failure
         if preview_msg_id:
-             try: await call.message.edit_reply_markup(reply_markup=None)
+             try: await bot.edit_message_reply_markup(call.message.chat.id, preview_msg_id, reply_markup=None)
              except: pass
         await state.finish()
         await bot.send_message(call.from_user.id, "Ошибка при публикации поста. Проверьте права бота и пользователя." if lang == "ru" else "Error publishing post. Check bot and user permissions.", reply_markup=main_menu_keyboard(lang))
@@ -1504,7 +1511,7 @@ async def cb_confirm_publish(call: types.CallbackQuery, state: FSMContext, lang:
         logger.error(f"Telegram API Generic Error publishing post to {tg_channel_id}: {e}")
         await call.answer("Произошла ошибка Telegram API.", show_alert=True)
         if preview_msg_id:
-             try: await call.message.edit_reply_markup(reply_markup=None)
+             try: await bot.edit_message_reply_markup(call.message.chat.id, preview_msg_id, reply_markup=None)
              except: pass
         await state.finish()
         await bot.send_message(call.from_user.id, "Ошибка при публикации поста." if lang == "ru" else "Error publishing post.", reply_markup=main_menu_keyboard(lang))
@@ -1513,7 +1520,7 @@ async def cb_confirm_publish(call: types.CallbackQuery, state: FSMContext, lang:
         logger.error(f"Unexpected error during publish: {e}")
         await call.answer("Произошла внутренняя ошибка.", show_alert=True)
         if preview_msg_id:
-             try: await call.message.edit_reply_markup(reply_markup=None)
+             try: await bot.edit_message_reply_markup(call.message.chat.id, preview_msg_id, reply_markup=None)
              except: pass
         await state.finish()
         await bot.send_message(call.from_user.id, "Произошла ошибка при публикации поста." if lang == "ru" else "Error publishing post.", reply_markup=main_menu_keyboard(lang))
@@ -2388,7 +2395,7 @@ async def add_channel_received(message: types.Message, state: FSMContext, lang: 
     identifier = message.text.strip()
     await process_add_channel_input(message, state, lang, user_id, identifier=identifier)
 
-async def process_add_channel_input(message: types.Message, state: FSMContext, lang: str, user_id: int, identifier: str):
+async def process_add_channel_input(message: types.Message, state: FSMContext, lang: str, user_id: int):
     """Helper to process channel identifier input for adding a channel."""
     chat_id = None
     title = None
@@ -2552,39 +2559,31 @@ async def cb_add_editor(call: types.CallbackQuery, state: FSMContext, lang: str,
 async def add_editor_username(message: types.Message, state: FSMContext, lang: str):
     identifier = message.text.strip()
     target_user = None
-    target_tg_id = None
+    target_tg_id = None # Будет использован для поиска в Supabase
 
     if identifier.isdigit():
         target_tg_id = int(identifier)
+        # Поиск пользователя по tg_id (BIGINT)
         res = supabase.table("users").select("*").eq("tg_id", target_tg_id).execute()
         if res.data:
             target_user = res.data[0]
     else:
         if identifier.startswith("@"):
             identifier = identifier[1:]
-        # Search by username part, case-insensitive
-        # Note: Username lookup via DB might be tricky as Telegram usernames can change.
-        # Storing "@username" in DB 'name' field is okay if we update it regularly or accept stale data.
-        # Exact match search might be better if names are stored strictly.
-        # Let's search 'name' field which stores "@username" or "First Last".
-        # Attempting exact match first.
+        # Поиск пользователя по имени (username), хранящемуся в поле 'name'
+        # Это менее надежно, так как username может меняться или не быть установлен
         res = supabase.table("users").select("*").eq("name", "@" + identifier).execute()
-        if not res.data:
-             # Fallback to ilike if exact match fails? Or only support exact @username or ID?
-             # Let's support exact @username match or ID for simplicity.
-             await message.reply(TEXTS["user_not_found"][lang])
-             # Stay in the same state to allow retrying
-             return
-        # If multiple matches for partial name, this takes the first one. Needs refinement for production.
-        target_user = res.data[0]
-        target_tg_id = target_user["tg_id"]
+        if res.data:
+            target_user = res.data[0]
+            target_tg_id = target_user["tg_id"] # Получаем tg_id из найденной записи
 
-
+    # Если пользователь не найден ни по ID, ни по username
     if not target_user:
         await message.reply(TEXTS["user_not_found"][lang])
-        # Stay in the same state to allow retrying
+        # Остаемся в текущем состоянии для повторного ввода
         return
 
+    # Используем Supabase ID пользователя для связей в других таблицах
     target_user_id = target_user["id"]
     target_user_name = target_user["name"]
 
@@ -2931,6 +2930,7 @@ async def cb_open_language_settings(call: types.CallbackQuery, lang: str):
 async def cb_set_language(call: types.CallbackQuery, lang: str, user_id: int):
     new_lang = "ru" if call.data == "lang_ru" else "en"
     try:
+        # Обновление языка пользователя по его Supabase ID
         supabase.table("users").update({"language": new_lang}).eq("id", user_id).execute()
         # Update cache
         user_cache[call.from_user.id] = user_cache.get(call.from_user.id, {}) # Ensure user exists in cache
@@ -3013,21 +3013,22 @@ async def timezone_received(message: types.Message, state: FSMContext, lang: str
                   match = re.match(r'^(UTC|GMT|Z)([+-]\d{1,2})?(:(\d{2}))?$', timezone_str.upper())
                   if match:
                       base = match.group(1)
-                      offset_sign_hours = match.group(2)
-                      offset_minutes = match.group(4)
+                      offset_sign_hours_str = match.group(2)
+                      offset_minutes_str = match.group(4)
 
-                      if base == 'Z' or (base in ['UTC', 'GMT'] and offset_sign_hours is None):
+                      if base == 'Z' or (base in ['UTC', 'GMT'] and offset_sign_hours_str is None):
                           # UTC or GMT or Z without offset means UTC+0
                           valid_timezone = 'UTC'
-                      elif offset_sign_hours:
-                          hours = int(offset_sign_hours)
-                          minutes = int(offset_minutes) if offset_minutes else 0
+                      elif offset_sign_hours_str:
+                          hours = int(offset_sign_hours_str)
+                          minutes = int(offset_minutes_str) if offset_minutes_str else 0
                           if abs(hours) <= 14 and minutes >= 0 and minutes < 60: # Max UTC offset is around +/- 14
                               # Construct a consistent UTC+HH:MM string format
                                sign = '+' if hours >= 0 else '-'
                                valid_timezone = f"UTC{sign}{abs(hours):02d}:{minutes:02d}"
                                # Attempt Etc/GMT conversion again for standard names preference
                                try:
+                                   sign_multiplier = 1 if sign == '+' else -1
                                    total_seconds = (hours * 3600 + sign_multiplier * minutes * 60)
                                    offset_td = dt.timedelta(seconds=total_seconds)
                                    offset_minutes_total = int(offset_td.total_seconds() / 60)
@@ -3050,6 +3051,7 @@ async def timezone_received(message: types.Message, state: FSMContext, lang: str
 
     try:
         # Store the validated timezone string
+        # Обновление часового пояса пользователя по его Supabase ID
         supabase.table("users").update({"timezone": valid_timezone}).eq("id", user_id).execute()
         # Update cache
         user_cache[message.from_user.id] = user_cache.get(message.from_user.id, {})
@@ -3104,4 +3106,3 @@ async def handle_unknown_callback_in_state(call: types.CallbackQuery, lang: str)
 
 if __name__ == "__main__":
     executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
-
