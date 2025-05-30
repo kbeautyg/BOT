@@ -154,7 +154,7 @@ TEXTS = {
     },
     "prompt_add_channel": {
         "ru": "Отправьте @username или ID канала, который вы хотите добавить. Убедитесь, что бот является администратором в этом канале.",
-        "en": "Please send the channel @username or ID that you want to add. Make sure the bot is an administrator in that channel."
+        "en": "Please send the channel @username or ID that you want to add. Make sure the bot is an administrator in this channel."
     },
     "channel_added": {
         "ru": "Канал успешно добавлен!",
@@ -417,7 +417,7 @@ class PostStates(StatesGroup):
     waiting_for_button_url = State()
     waiting_for_add_more_buttons = State()
     waiting_for_schedule_options = State()
-    waiting_for_datetime = State()
+    waiting_for_datetime = State() # This state name is used for *new* post scheduling
     waiting_for_preview_confirm = State()
 
 class AddChannelState(StatesGroup):
@@ -433,7 +433,7 @@ class SettingsState(StatesGroup):
 class ScheduledPostsState(StatesGroup):
     waiting_for_channel_selection = State()
     viewing_scheduled_post = State() # State for when a specific scheduled post is being viewed/edited
-    # FIX: Add the missing state for waiting for datetime input
+    # State specifically for editing the datetime of an *existing* scheduled post
     waiting_for_datetime = State()
 
 
@@ -441,21 +441,14 @@ class ScheduledPostsState(StatesGroup):
 async def schedule_post_job(post_id: int):
     """Fetches post from DB, publishes it, updates status."""
     try:
-        res = supabase.table("posts").select("*").eq("id", post_id).execute()
+        # --- Modified: Select job_id as well ---
+        res = supabase.table("posts").select("id, channel_id, content, media_type, media_file_id, buttons_json, status, job_id").eq("id", post_id).execute()
         if not res.data:
             logger.warning(f"Scheduler job failed: Post {post_id} not found.")
             # Attempt to remove job if it exists by job_id
-            jobs = scheduler.get_jobs()
-            for job in jobs:
-                 if job.args and len(job.args) > 0 and job.args[0] == post_id:
-                      try:
-                          scheduler.remove_job(job.id)
-                          # Also update post status if found with job_id but no data? No, if no data, the row was deleted.
-                          # Just log and move on.
-                          logger.info(f"Removed orphaned scheduler job {job.id} for missing post {post_id}")
-                      except Exception as e:
-                           logger.error(f"Failed to remove orphaned scheduler job {job.id} for post {post_id}: {e}")
-                      break
+            # This part of cleanup is better handled in load_scheduled_posts or a dedicated cleanup task
+            # As we don't have the job_id easily here unless fetched from DB, and the post is gone.
+            # We trust APScheduler's persistence and the load function for cleanup.
             return
 
         post = res.data[0]
@@ -464,19 +457,37 @@ async def schedule_post_job(post_id: int):
         media_type = post["media_type"]
         media_file_id = post["media_file_id"]
         buttons_json = post["buttons_json"]
+        current_job_id = post["job_id"] # Get job_id from DB record
         # Ensure post is still scheduled before sending
         if post["status"] != "scheduled":
              logger.warning(f"Post {post_id} status is not 'scheduled' ({post['status']}). Skipping publication.")
-             # Consider cleaning up the job if status is wrong? Or trust it gets removed on successful publish.
-             return
+             # If status is wrong, it implies the job should no longer be here.
+             # Try to remove the job based on the stored job_id.
+             if current_job_id:
+                  try:
+                      scheduler.remove_job(current_job_id)
+                      logger.info(f"Removed stale scheduler job {current_job_id} for post {post_id} with status {post['status']}")
+                  except Exception as e:
+                       logger.error(f"Failed to remove stale scheduler job {current_job_id} for post {post_id}: {e}")
+             # Also update DB to remove job_id if status wasn't scheduled but job_id was present
+             try:
+                  supabase.table("posts").update({"job_id": None}).eq("id", post_id).execute()
+             except Exception as e:
+                  logger.error(f"Failed to clear job_id for post {post_id} with status {post['status']}: {e}")
+
+             return # Exit if not scheduled
 
         # Get channel Telegram ID
         channel_res = supabase.table("channels").select("channel_id").eq("id", channel_db_id).execute()
         if not channel_res.data:
              logger.error(f"Scheduler job failed: Channel DB ID {channel_db_id} not found for post {post_id}. Cannot publish.")
-             # Maybe mark post status as error? Or leave it scheduled/draft?
-             # Leave as scheduled, but it won't publish. Manual intervention needed.
+             # Mark post status as failed publishing and clear job_id
+             try:
+                  supabase.table("posts").update({"status": "publishing_failed", "job_id": None}).eq("id", post_id).execute()
+             except Exception as e:
+                  logger.error(f"Failed to mark post {post_id} as publishing_failed and clear job_id: {e}")
              return
+
         tg_channel_id = channel_res.data[0]["channel_id"]
 
         reply_markup = None
@@ -485,9 +496,17 @@ async def schedule_post_job(post_id: int):
                 btn_list = json.loads(buttons_json)
                 if btn_list:
                     reply_markup = InlineKeyboardMarkup()
+                    # Add buttons in rows of up to 2, or 1 if URL is long
+                    row_buttons = []
                     for b in btn_list:
-                        if "url" in b:
-                            reply_markup.add(InlineKeyboardButton(b["text"], url=b["url"]))
+                        if len(row_buttons) < 2: # Try adding to current row
+                             row_buttons.append(InlineKeyboardButton(b["text"], url=b["url"]))
+                        else: # Row is full, add it and start a new row
+                             reply_markup.row(*row_buttons)
+                             row_buttons = [InlineKeyboardButton(b["text"], url=b["url"])]
+                    if row_buttons: # Add the last row if it has buttons
+                        reply_markup.row(*row_buttons)
+
             except json.JSONDecodeError:
                 logger.error(f"Failed to decode buttons_json for post {post_id}")
             except Exception as e:
@@ -497,44 +516,69 @@ async def schedule_post_job(post_id: int):
         try:
             logger.info(f"Attempting to send scheduled post {post_id} to channel {tg_channel_id}")
             # Use caption for media posts, text for text-only posts
-            send_text = content if content else None # Don't send empty string caption/text
+            send_text = content if not (media_type and media_file_id) else None # Text only if NO media
+            send_caption = content if media_type and media_file_id else None # Caption only if there's media
+
+            # Truncate caption/text if too long
+            if send_caption and len(send_caption) > 1024:
+                 send_caption = send_caption[:1021] + "..."
+                 logger.warning(f"Truncated publish caption for post {post_id}.")
+            if send_text and len(send_text) > 4096:
+                 send_text = send_text[:4093] + "..."
+                 logger.warning(f"Truncated publish text for post {post_id}.")
+
             if media_type and media_file_id:
                 if media_type == "photo":
-                    await bot.send_photo(tg_channel_id, media_file_id, caption=send_text, reply_markup=reply_markup)
+                    await bot.send_photo(tg_channel_id, media_file_id, caption=send_caption, reply_markup=reply_markup, parse_mode="Markdown")
                 elif media_type == "video":
-                    await bot.send_video(tg_channel_id, media_file_id, caption=send_text, reply_markup=reply_markup)
+                    await bot.send_video(tg_channel_id, media_file_id, caption=send_caption, reply_markup=reply_markup, parse_mode="Markdown")
                 elif media_type == "document":
-                    await bot.send_document(tg_channel_id, media_file_id, caption=send_text, reply_markup=reply_markup)
+                    await bot.send_document(tg_channel_id, media_file_id, caption=send_caption, reply_markup=reply_markup, parse_mode="Markdown")
                 elif media_type == "audio":
-                    await bot.send_audio(tg_channel_id, media_file_id, caption=send_text, reply_markup=reply_markup)
+                    await bot.send_audio(tg_channel_id, media_file_id, caption=send_caption, reply_markup=reply_markup, parse_mode="Markdown")
                 elif media_type == "animation":
-                    await bot.send_animation(tg_channel_id, media_file_id, caption=send_text, reply_markup=reply_markup)
+                    await bot.send_animation(tg_channel_id, media_file_id, caption=send_caption, reply_markup=reply_markup, parse_mode="Markdown")
                 else:
                     logger.warning(f"Unknown media type '{media_type}' for post {post_id}. Sending as text.")
-                    await bot.send_message(tg_channel_id, content or " ", reply_markup=reply_markup) # Send space if content is empty
+                    await bot.send_message(tg_channel_id, send_text or " ", reply_markup=reply_markup, parse_mode="Markdown") # Send space if content is empty
             else:
-                await bot.send_message(tg_channel_id, content or " ", reply_markup=reply_markup) # Send space if content is empty
+                await bot.send_message(tg_channel_id, send_text or " ", reply_markup=reply_markup, parse_mode="Markdown") # Send space if content is empty
 
 
-            # Update post status and remove job_id
+            # Update post status and remove job_id in DB
+            # --- Modified: Set job_id to NULL on publish ---
             supabase.table("posts").update({"status": "published", "job_id": None}).eq("id", post_id).execute()
             logger.info(f"Post {post_id} successfully published to {tg_channel_id}.")
 
+            # Remove the job from APScheduler explicitly after successful execution
+            # Although APScheduler DateTrigger jobs run only once and are removed automatically,
+            # explicitly removing here handles cases where the job might persist unexpectedly.
+            if current_job_id:
+                 try:
+                     scheduler.remove_job(current_job_id)
+                     logger.info(f"Removed job {current_job_id} from scheduler after successful publication of post {post_id}.")
+                 except Exception as e:
+                     logger.error(f"Failed to remove job {current_job_id} from scheduler after publication of post {post_id}: {e}")
+
+
         except (ChatNotFound, ChatAdminRequired, BadRequest) as e:
              logger.error(f"Telegram API permissions/chat error publishing scheduled post {post_id} to {tg_channel_id}: {e}")
-             # Mark post status as failed publishing
+             # Mark post status as failed publishing and clear job_id
+             # --- Modified: Set job_id to NULL on publishing_failed ---
              supabase.table("posts").update({"status": "publishing_failed", "job_id": None}).eq("id", post_id).execute()
              # Optionally notify owner?
              pass
 
         except TelegramAPIError as e:
             logger.error(f"Telegram API Generic Error publishing scheduled post {post_id} to {tg_channel_id}: {e}")
-            # Mark post status as failed publishing
+            # Mark post status as failed publishing and clear job_id
+            # --- Modified: Set job_id to NULL on publishing_failed ---
             supabase.table("posts").update({"status": "publishing_failed", "job_id": None}).eq("id", post_id).execute()
             pass # Or update status?
 
         except Exception as e:
             logger.error(f"Unexpected error publishing scheduled post {post_id} to {tg_channel_id}: {e}")
+            # --- Modified: Set job_id to NULL on publishing_failed ---
             supabase.table("posts").update({"status": "publishing_failed", "job_id": None}).eq("id", post_id).execute()
 
 
@@ -542,6 +586,7 @@ async def schedule_post_job(post_id: int):
         logger.error(f"Error in schedule_post_job for post {post_id}: {e}")
         # If an error occurs before accessing the post or getting channel_id
         try:
+             # --- Modified: Set job_id to NULL on publishing_failed ---
              supabase.table("posts").update({"status": "publishing_failed", "job_id": None}).eq("id", post_id).execute()
              logger.info(f"Marked post {post_id} as publishing_failed due to error before sending.")
         except Exception as db_err:
@@ -552,6 +597,7 @@ async def load_scheduled_posts():
     """Loads scheduled posts from DB and adds them to the scheduler."""
     now_utc = datetime.now(pytz.utc)
     # Only load posts with status 'scheduled' and scheduled in the future
+    # --- Modified: Select job_id here ---
     res = supabase.table("posts").select("id, scheduled_at, job_id").eq("status", "scheduled").gt("scheduled_at", now_utc.isoformat()).execute()
     scheduled_posts = res.data or []
     logger.info(f"Found {len(scheduled_posts)} scheduled posts to load.")
@@ -560,14 +606,17 @@ async def load_scheduled_posts():
     try:
         all_jobs = scheduler.get_jobs()
         active_post_ids = {p["id"] for p in scheduled_posts}
-        job_ids_to_keep = {p["job_id"] for p in scheduled_posts if p.get("job_id")} # Only keep jobs linked to loaded posts
+        # Collect job_ids from DB for validation
+        db_job_ids = {p["job_id"] for p in scheduled_posts if p.get("job_id")}
 
         for job in all_jobs:
-             # Jobs should have an args tuple where the first element is post_id
+             # Check if the job is for our schedule_post_job function and has args
              if job.func == schedule_post_job and job.args and len(job.args) > 0:
                   job_post_id = job.args[0]
-                  # If the job's post_id is not in our list of active scheduled posts OR the job_id doesn't match the one from DB (means it was rescheduled)
-                  if job_post_id not in active_post_ids or job.id not in job_ids_to_keep:
+                  # Check if the job's associated post_id is in our list of active scheduled posts
+                  # OR if the job's ID is not in the list of expected job_ids from the DB
+                  # (This handles cases where a post was rescheduled and has a new job_id)
+                  if job_post_id not in active_post_ids or job.id not in db_job_ids:
                        try:
                             scheduler.remove_job(job.id)
                             logger.info(f"Removed orphaned/stale scheduler job {job.id} for post {job_post_id}")
@@ -580,6 +629,20 @@ async def load_scheduled_posts():
                       logger.warning(f"Removed invalid scheduler job {job.id} with missing args.")
                  except Exception as e:
                       logger.error(f"Failed to remove invalid scheduler job {job.id}: {e}")
+             # --- Added: Check for jobs in APScheduler that are NOT linked in DB ---
+             elif job.id not in db_job_ids:
+                 # This job exists in APScheduler but its ID isn't found in the job_id column
+                 # of any 'scheduled' post in the DB. It might be an old job from a deleted post,
+                 # or a job whose post status changed.
+                 # If it's not linked to any 'scheduled' post via job_id, remove it.
+                 # We already covered cases where post_id is known but post is not active.
+                 # This catches jobs whose post_id might be unknown or that weren't created by this bot logic (less likely but safer).
+                 # Need to be careful not to remove jobs not related to posts (if any are added later).
+                 # For now, assuming all jobs added are post jobs.
+                 # A safer check would be to see if *any* post has this job.id, regardless of status, and if not, remove it.
+                 # Let's stick to checking against the job_ids from *active scheduled* posts for simplicity and relevance to this task.
+                 pass # This case is largely covered by the first check (job_post_id not in active_post_ids)
+
 
     except Exception as e:
          logger.error(f"Error cleaning up old scheduler jobs: {e}")
@@ -588,29 +651,48 @@ async def load_scheduled_posts():
     for post in scheduled_posts:
         post_id = post["id"]
         scheduled_time_utc = datetime.fromisoformat(post["scheduled_at"])
-        # Only add jobs for posts scheduled in the future (sanity check)
+        db_job_id = post.get("job_id") # Get job_id from DB
+
+        # Only add jobs for posts scheduled in the future (sanity check, although DB query should handle this)
         if scheduled_time_utc <= now_utc:
              logger.warning(f"Post {post_id} scheduled time {scheduled_time_utc} is in the past. Marking as draft.")
              try:
+                  # --- Modified: Set job_id to NULL when marking as draft ---
                   supabase.table("posts").update({"status": "draft", "job_id": None}).eq("id", post_id).execute()
+                  # If there was a job_id, also try to remove the job
+                  if db_job_id:
+                       try: scheduler.remove_job(db_job_id)
+                       except Exception as e: logger.error(f"Failed to remove past-scheduled job {db_job_id}: {e}")
+
              except Exception as e:
                   logger.error(f"Failed to mark post {post_id} as draft after past time check: {e}")
              continue # Skip scheduling
 
         try:
             # Add new job
+            # Use the job_id from DB if it exists, otherwise generate a new one
+            # Using replace_existing=True with a potentially non-unique generated ID is risky.
+            # It's better to always generate a new unique ID if the DB job_id is missing or stale.
+            # Let's use the DB job_id if present, otherwise generate. `replace_existing=True` is needed if we restart and add jobs with the same ID.
+            # APScheduler recommends using stable IDs for persistence. The job_id from DB *is* the stable ID.
+            job_to_add_id = db_job_id if db_job_id else f"post_{post_id}_{scheduled_time_utc.timestamp()}_{os.urandom(4).hex()}" # Add random part for uniqueness if generating
+
             job = scheduler.add_job(
                 schedule_post_job,
                 trigger=DateTrigger(run_date=scheduled_time_utc),
                 args=[post_id],
-                # Use the job_id from DB if it exists, otherwise generate a new one
-                id=post.get("job_id", f"post_{post_id}_{scheduled_time_utc.timestamp()}"),
-                replace_existing=True # Replace if ID is already there (important for stability)
+                id=job_to_add_id,
+                replace_existing=True # Replace if ID is already there (important for stability during restarts)
             )
             # Ensure job_id in DB matches the one created/used by APScheduler
-            if post.get("job_id") != job.id:
+            # This step is crucial. If DB job_id was NULL or different, update it.
+            if db_job_id != job.id:
+                 # --- Modified: Update job_id in DB after adding/replacing job ---
                  supabase.table("posts").update({"job_id": job.id}).eq("id", post_id).execute()
                  logger.info(f"Updated job_id in DB for post {post_id} to {job.id}.")
+            else:
+                 logger.info(f"Verified job_id {job.id} in DB matches APScheduler job for post {post_id}.")
+
 
             logger.info(f"Loaded scheduled post {post_id} with job ID {job.id} for {scheduled_time_utc}.")
 
@@ -621,6 +703,8 @@ async def load_scheduled_posts():
 async def on_startup(dp):
     await bot.delete_webhook(drop_pending_updates=True)
     scheduler.start()
+    # --- Logic related to line 555 ---
+    # load_scheduled_posts is called here, which now includes job_id handling and cleanup
     await load_scheduled_posts()
     logger.info("Bot started and scheduler loaded.")
 
@@ -641,6 +725,8 @@ async def cmd_cancel(message: types.Message, state: FSMContext, lang: str):
     data = await state.get_data()
     msg_to_delete_id = data.get("select_msg_id") # Used in channel selection etc.
     preview_msg_id = data.get("preview_msg_id") # Used in preview state
+    # Check if we were editing a scheduled post
+    editing_scheduled_post_id = data.get("post_db_id") # If post_db_id exists, we were editing a scheduled post
 
     if msg_to_delete_id:
         try:
@@ -655,21 +741,49 @@ async def cmd_cancel(message: types.Message, state: FSMContext, lang: str):
              # Try editing caption, but handle if it's a media message without a caption
              try:
                   current_caption = (await bot.copy_message(message.chat.id, message.chat.id, preview_msg_id)).caption # Get current caption safely
-                  new_caption = (current_caption or data.get("content") or "") + ("\n\n*Отменено*" if lang=="ru" else "\n\n*Cancelled*")
-                  await bot.edit_message_caption(chat_id=message.chat.id, message_id=preview_msg_id, caption=new_caption, parse_mode="Markdown")
+                  # For a text message, need to get text instead of caption
+                  if current_caption is None:
+                      current_caption = (await bot.copy_message(message.chat.id, message.chat.id, preview_msg_id)).text
+                  new_content = (current_caption or data.get("content") or "") + ("\n\n*Отменено*" if lang=="ru" else "\n\n*Cancelled*")
+
+                  media_type = data.get("media_type")
+                  media_file_id = data.get("media_file_id")
+
+                  if media_type and media_file_id: # Edit caption
+                       if len(new_content) > 1024: new_content = new_content[:1021] + "..."
+                       await bot.edit_message_caption(chat_id=message.chat.id, message_id=preview_msg_id, caption=new_content, parse_mode="Markdown")
+                  else: # Edit text
+                       if len(new_content) > 4096: new_content = new_content[:4093] + "..."
+                       await bot.edit_message_text(chat_id=message.chat.id, message_id=preview_msg_id, text=new_content, parse_mode="Markdown")
+
              except Exception:
-                  # If caption editing fails (e.g., text message, or media without initial caption)
+                  # If caption/text editing fails (e.g., message type issue, or original message was empty)
                   pass # Ignore error
         except Exception:
-            pass # Ignore errors
+            pass # Ignore errors (e.g. message deleted)
 
     await state.finish()
+
+    # --- Added: If cancelling from scheduled post flow, return to list ---
+    if editing_scheduled_post_id:
+        # Try to get channel ID from the cancelled state data or DB if available
+        channel_db_id = data.get("channel_id")
+        if channel_db_id:
+             # Instead of main menu, go back to scheduled list for that channel
+             await bot.send_message(message.chat.id, "Действие отменено." if lang == "ru" else "Action cancelled.")
+             await send_scheduled_posts_list(message.chat.id, channel_db_id, lang, data.get("user_id")) # user_id is in middleware data
+             return
+
+    # Default: return to main menu
     await message.reply("Действие отменено." if lang == "ru" else "Action cancelled.", reply_markup=main_menu_keyboard(lang))
 
 @dp.callback_query_handler(lambda c: c.data == "cancel_post_creation", state=PostStates.waiting_for_preview_confirm)
-async def cb_cancel_post_creation(call: types.CallbackQuery, state: FSMContext, lang: str):
+async def cb_cancel_post_creation(call: types.CallbackQuery, state: FSMContext, lang: str, user_id: int):
      data = await state.get_data()
      preview_msg_id = data.get("preview_msg_id")
+     # Check if we were editing a scheduled post (post_db_id will be present)
+     editing_scheduled_post_id = data.get("post_db_id")
+
 
      if preview_msg_id:
         try:
@@ -678,8 +792,20 @@ async def cb_cancel_post_creation(call: types.CallbackQuery, state: FSMContext, 
              # Try editing caption, but handle if it's a media message without a caption
              try:
                   current_caption = (await bot.copy_message(call.message.chat.id, call.message.chat.id, preview_msg_id)).caption # Get current caption safely
-                  new_caption = (current_caption or data.get("content") or "") + ("\n\n*Отменено*" if lang=="ru" else "\n\n*Cancelled*")
-                  await call.message.edit_caption(caption=new_caption, parse_mode="Markdown")
+                  if current_caption is None: # If no caption, it was a text message
+                      current_caption = (await bot.copy_message(call.message.chat.id, call.message.chat.id, preview_msg_id)).text
+
+                  new_content = (current_caption or data.get("content") or "") + ("\n\n*Отменено*" if lang=="ru" else "\n\n*Cancelled*")
+                  media_type = data.get("media_type")
+                  media_file_id = data.get("media_file_id")
+
+                  if media_type and media_file_id: # Edit caption
+                       if len(new_content) > 1024: new_content = new_content[:1021] + "..."
+                       await call.message.edit_caption(caption=new_content, parse_mode="Markdown")
+                  else: # Edit text
+                       if len(new_content) > 4096: new_content = new_content[:4093] + "..."
+                       await call.message.edit_text(text=new_content, parse_mode="Markdown")
+
              except Exception:
                   pass
         except Exception:
@@ -687,6 +813,17 @@ async def cb_cancel_post_creation(call: types.CallbackQuery, state: FSMContext, 
 
      await call.answer("Отменено." if lang == "ru" else "Cancelled.")
      await state.finish()
+
+     # --- Added: If cancelling from scheduled post flow, return to list ---
+     if editing_scheduled_post_id:
+          # Try to get channel ID from the cancelled state data
+         channel_db_id = data.get("channel_id")
+         if channel_db_id:
+              await bot.send_message(call.from_user.id, "Действие отменено." if lang == "ru" else "Action cancelled.")
+              await send_scheduled_posts_list(call.from_user.id, channel_db_id, lang, user_id)
+              return
+
+     # Default: return to main menu
      await bot.send_message(call.from_user.id, "Действие отменено." if lang == "ru" else "Action cancelled.", reply_markup=main_menu_keyboard(lang))
 
 
@@ -726,31 +863,6 @@ async def start_create_post(message: types.Message, state: FSMContext, lang: str
     await state.update_data(select_msg_id=msg.message_id)
     await PostStates.waiting_for_channel.set()
 
-@dp.callback_query_handler(lambda c: c.data.startswith("selch_post:"), state=PostStates.waiting_for_channel)
-async def cb_select_channel_post(call: types.CallbackQuery, state: FSMContext, lang: str, user_id: int):
-    chan_db_id = int(call.data.split(":")[1])
-
-    # Verify user has permission for this channel
-    res = supabase.table("channel_editors").select("role").eq("channel_id", chan_db_id).eq("user_id", user_id).in_("role", ["owner", "editor"]).execute()
-    if not res.data:
-        await call.answer(TEXTS["no_permission"][lang], show_alert=True)
-        await state.finish()
-        # Remove the selection message if possible
-        try: await call.message.delete() # Clean up message
-        except: await call.message.edit_reply_markup(reply_markup=None)
-        return
-
-    await state.update_data(channel_id=chan_db_id)
-    await call.answer()
-    try:
-        await call.message.delete() # Delete the channel selection message
-    except Exception:
-         await call.message.edit_reply_markup(reply_markup=None) # Fallback to removing keyboard
-         pass
-
-    await PostStates.waiting_for_text.set()
-    await bot.send_message(call.from_user.id, TEXTS["enter_post_text"][lang])
-
 
 # --- Input Handlers for Post Content ---
 # Text input (can be actual text or /skip)
@@ -758,34 +870,63 @@ async def cb_select_channel_post(call: types.CallbackQuery, state: FSMContext, l
 async def post_text_received(message: types.Message, state: FSMContext, lang: str):
     text = message.text
 
-    # Check for /cancel command specifically, let the cmd_cancel handle it
-    # This handler will only process non-/cancel text if it's in PostStates.waiting_for_text
-
     # if text.lower().strip() in ["/skip", "скип", "пропустить"]:
     #     await state.update_data(content="")
     # else:
     await state.update_data(content=text) # Save text, even if it's /skip to be consistent
 
-    await PostStates.waiting_for_media.set()
-    await message.reply(TEXTS["enter_post_media"][lang])
+    # After receiving text, move to asking for media
+    # If we were editing an existing scheduled post, go back to preview after setting text
+    data = await state.get_data()
+    post_db_id = data.get("post_db_id")
+
+    if post_db_id is not None: # Editing an existing scheduled post
+         try:
+              # Update content in DB
+              supabase.table("posts").update({"content": text}).eq("id", post_db_id).execute()
+              await ScheduledPostsState.viewing_scheduled_post.set()
+              await view_scheduled_post_by_id(message.chat.id, post_db_id, lang, data.get("user_id")) # user_id is in middleware data
+         except Exception as e:
+              logger.error(f"Failed to update content for scheduled post {post_db_id}: {e}")
+              await message.reply("Ошибка при сохранении изменений." if lang == "ru" else "Error saving changes.", reply_markup=main_menu_keyboard(lang))
+              await state.finish()
+
+    else: # Creating a new post
+        await PostStates.waiting_for_media.set()
+        await message.reply(TEXTS["enter_post_media"][lang])
+
 
 # Media input (can be media or /skip text)
 @dp.message_handler(content_types=[ContentType.PHOTO, ContentType.VIDEO, ContentType.DOCUMENT, ContentType.AUDIO, ContentType.ANIMATION, ContentType.TEXT], state=PostStates.waiting_for_media)
 async def post_media_received(message: types.Message, state: FSMContext, lang: str):
+    data = await state.get_data()
+    post_db_id = data.get("post_db_id") # Check if editing scheduled post
+
     if message.content_type == ContentType.TEXT:
         if message.text.lower().strip() in ["/skip", "скип", "пропустить"]:
             await state.update_data(media_type=None, media_file_id=None)
-            await PostStates.waiting_for_button_text.set()
-            await message.reply(TEXTS["enter_button_text"][lang])
+            # Move to next step or back to preview
+            if post_db_id is not None: # Editing existing scheduled post
+                 try:
+                     supabase.table("posts").update({"media_type": None, "media_file_id": None}).eq("id", post_db_id).execute()
+                     await ScheduledPostsState.viewing_scheduled_post.set()
+                     await view_scheduled_post_by_id(message.chat.id, post_db_id, lang, data.get("user_id"))
+                 except Exception as e:
+                      logger.error(f"Failed to update media for scheduled post {post_db_id}: {e}")
+                      await message.reply("Ошибка при сохранении изменений." if lang == "ru" else "Error saving changes.", reply_markup=main_menu_keyboard(lang))
+                      await state.finish()
+            else: # Creating new post
+                await PostStates.waiting_for_button_text.set()
+                await message.reply(TEXTS["enter_button_text"][lang])
+
         # else: ignore other text input in media state (unless it's /cancel, handled by global)
         return
 
     # Handle media
     caption = message.caption or ""
-    data = await state.get_data()
     # Decide how to handle caption: append to existing content OR overwrite?
     # Let's append caption to the previously entered text content.
-    current_content = data.get("content", "")
+    current_content = data.get("content", "") # Get content from state
     if caption:
          if current_content:
               current_content += "\n\n" + caption # Add a separator
@@ -817,19 +958,53 @@ async def post_media_received(message: types.Message, state: FSMContext, lang: s
          # This case should not happen if content_types are limited, but safety
          await state.update_data(media_type=None, media_file_id=None)
 
-    await PostStates.waiting_for_button_text.set()
-    await message.reply(TEXTS["enter_button_text"][lang])
+
+    # After receiving media, move to next step or back to preview
+    if post_db_id is not None: # Editing existing scheduled post
+         try:
+             # Update content, media_type, media_file_id in DB
+             update_data = {
+                 "content": current_content,
+                 "media_type": media_type,
+                 "media_file_id": file_id
+             }
+             supabase.table("posts").update(update_data).eq("id", post_db_id).execute()
+             await ScheduledPostsState.viewing_scheduled_post.set()
+             await view_scheduled_post_by_id(message.chat.id, post_db_id, lang, data.get("user_id"))
+         except Exception as e:
+              logger.error(f"Failed to update media/content for scheduled post {post_db_id}: {e}")
+              await message.reply("Ошибка при сохранении изменений." if lang == "ru" else "Error saving changes.", reply_markup=main_menu_keyboard(lang))
+              await state.finish()
+
+    else: # Creating new post
+        await PostStates.waiting_for_button_text.set()
+        await message.reply(TEXTS["enter_button_text"][lang])
+
 
 # Button text input (can be text or /skip)
 @dp.message_handler(content_types=ContentType.TEXT, state=PostStates.waiting_for_button_text)
 async def button_text_received(message: types.Message, state: FSMContext, lang: str):
-    text = message.text
-    if text.lower().strip() in ["/skip", "скип", "пропустить"]:
+    text = message.text.strip()
+    data = await state.get_data()
+    post_db_id = data.get("post_db_id") # Check if editing scheduled post
+
+    if text.lower() in ["/skip", "скип", "пропустить"]:
         await state.update_data(buttons=[]) # Ensure buttons list is empty if skipped
-        # Move directly to schedule options
-        await PostStates.waiting_for_schedule_options.set()
-        kb = schedule_options_keyboard(lang)
-        await message.reply(TEXTS["ask_schedule_options"][lang], reply_markup=kb)
+        # Move directly to schedule options or back to preview
+        if post_db_id is not None: # Editing existing scheduled post
+             try:
+                  # Update buttons in DB
+                  supabase.table("posts").update({"buttons_json": None}).eq("id", post_db_id).execute() # Save None for empty buttons
+                  await ScheduledPostsState.viewing_scheduled_post.set()
+                  await view_scheduled_post_by_id(message.chat.id, post_db_id, lang, data.get("user_id"))
+             except Exception as e:
+                  logger.error(f"Failed to update buttons for scheduled post {post_db_id}: {e}")
+                  await message.reply("Ошибка при сохранении изменений." if lang == "ru" else "Error saving changes.", reply_markup=main_menu_keyboard(lang))
+                  await state.finish()
+        else: # Creating new post
+            await PostStates.waiting_for_schedule_options.set()
+            kb = schedule_options_keyboard(lang)
+            await message.reply(TEXTS["ask_schedule_options"][lang], reply_markup=kb)
         return
 
     # If not skip, save button text and ask for URL
@@ -873,7 +1048,7 @@ async def cb_add_button_yes(call: types.CallbackQuery, state: FSMContext, lang: 
         await call.message.edit_reply_markup(reply_markup=None)
         pass
     await state.update_data(current_button_text=None) # Clear temp button text
-    await PostStates.waiting_for_button_text.set()
+    await PostStates.waiting_for_button_text.set() # Go back to button text input
     await bot.send_message(call.from_user.id, TEXTS["enter_button_text"][lang])
 
 @dp.callback_query_handler(lambda c: c.data == "add_btn_no", state=PostStates.waiting_for_add_more_buttons)
@@ -885,12 +1060,42 @@ async def cb_add_button_no(call: types.CallbackQuery, state: FSMContext, lang: s
          await call.message.edit_reply_markup(reply_markup=None)
          pass
     await state.update_data(current_button_text=None) # Clear temp button text
-    # Move to schedule options
-    await PostStates.waiting_for_schedule_options.set()
-    kb = schedule_options_keyboard(lang)
-    await bot.send_message(call.from_user.id, TEXTS["ask_schedule_options"][lang], reply_markup=kb)
+
+    # After finishing buttons, move to schedule options or back to preview
+    data = await state.get_data()
+    post_db_id = data.get("post_db_id")
+
+    if post_db_id is not None: # Editing existing scheduled post
+         try:
+              # Update buttons in DB
+              buttons_to_save = data.get("buttons")
+              supabase.table("posts").update({"buttons_json": json.dumps(buttons_to_save) if buttons_to_save else None}).eq("id", post_db_id).execute()
+              await ScheduledPostsState.viewing_scheduled_post.set()
+              await view_scheduled_post_by_id(call.from_user.id, post_db_id, lang, data.get("user_id"))
+         except Exception as e:
+              logger.error(f"Failed to update buttons for scheduled post {post_db_id}: {e}")
+              await bot.send_message(call.from_user.id, "Ошибка при сохранении изменений." if lang == "ru" else "Error saving changes.", reply_markup=main_menu_keyboard(lang))
+              await state.finish()
+
+    else: # Creating new post
+        await PostStates.waiting_for_schedule_options.set()
+        kb = schedule_options_keyboard(lang)
+        await bot.send_message(call.from_user.id, TEXTS["ask_schedule_options"][lang], reply_markup=kb)
+
 
 # --- Scheduling and Preview ---
+@dp.callback_query_handler(lambda c: c.data == "edit_back_to_content", state=PostStates.waiting_for_schedule_options)
+async def cb_back_to_content_edit(call: types.CallbackQuery, state: FSMContext, lang: str):
+    """Callback to go back from schedule options to editing content."""
+    await call.answer()
+    try: await call.message.delete()
+    except: await call.message.edit_reply_markup(reply_markup=None)
+
+    # Go back to preview state (assuming editing always loops back to preview before scheduling)
+    await PostStates.waiting_for_preview_confirm.set()
+    await send_post_preview(call.from_user.id, state, lang)
+
+
 @dp.callback_query_handler(lambda c: c.data in ["schedule_now", "schedule_later"], state=PostStates.waiting_for_schedule_options)
 async def cb_schedule_options(call: types.CallbackQuery, state: FSMContext, lang: str, timezone: str):
     action = call.data
@@ -900,8 +1105,8 @@ async def cb_schedule_options(call: types.CallbackQuery, state: FSMContext, lang
     content = data.get("content") or ""
     media_file_id = data.get("media_file_id")
 
+    # Ensure post content is not empty
     if not content and not media_file_id:
-        # Post is empty, cannot proceed to scheduling/publishing
         try:
             await call.message.delete()
         except Exception:
@@ -924,12 +1129,13 @@ async def cb_schedule_options(call: types.CallbackQuery, state: FSMContext, lang
         await send_post_preview(call.from_user.id, state, lang)
 
     elif action == "schedule_later":
-        # Move to waiting for datetime
+        # Move to waiting for datetime (using the state for *new* post scheduling)
         await state.update_data(is_scheduled=True) # Flag for preview keyboard
         await PostStates.waiting_for_datetime.set()
         prompt = TEXTS["prompt_schedule_datetime"][lang].format(timezone=timezone)
         await bot.send_message(call.from_user.id, prompt)
 
+# Handler for datetime input when creating a *new* scheduled post
 @dp.message_handler(content_types=ContentType.TEXT, state=PostStates.waiting_for_datetime)
 async def post_datetime_received(message: types.Message, state: FSMContext, lang: str, timezone: str):
     datetime_str = message.text.strip()
@@ -988,23 +1194,26 @@ async def send_post_preview(chat_id: int, state: FSMContext, lang: str):
          else:
               logger.warning(f"Channel DB ID {channel_db_id} not found for preview.")
 
-    preview_text = f"_{TEXTS['confirm_post_preview_text'][lang]}_\n"
-    preview_text += f"Канал: *{channel_title}*\n" if lang == "ru" else f"Channel: *{channel_title}*\n"
+    preview_header = f"_{TEXTS['confirm_post_preview_text'][lang]}_\n"
+    preview_header += f"Канал: *{channel_title}*\n" if lang == "ru" else f"Channel: *{channel_title}*\n"
     if is_scheduled and scheduled_at_utc_str:
         try:
              scheduled_dt_utc = datetime.fromisoformat(scheduled_at_utc_str)
-             user_tz_str = user_cache.get(chat_id, {}).get("timezone", "UTC") # Get timezone from cache
+             # --- Modified: Get user's timezone correctly from cache based on chat_id/user_id ---
+             user_tz_str = user_cache.get(chat_id, {}).get("timezone", "UTC") # chat_id is the user's ID here
              user_tz = pytz.timezone(user_tz_str) if user_tz_str in pytz.all_timezones_set else pytz.utc
              scheduled_dt_local = scheduled_dt_utc.astimezone(user_tz)
              # Format time using standard library strftime
              scheduled_time_display = scheduled_dt_local.strftime('%d.%m.%Y %H:%M')
-             preview_text += f"Запланировано на: *{scheduled_time_display} ({user_tz_str})*\n" if lang == "ru" else f"Scheduled for: *{scheduled_time_display} ({user_tz_str})*\n"
+             preview_header += f"Запланировано на: *{scheduled_time_display} ({user_tz_str})*\n" if lang == "ru" else f"Scheduled for: *{scheduled_time_display} ({user_tz_str})*\n"
         except Exception as e:
              logger.error(f"Error formatting scheduled time for preview: {e}")
-             preview_text += f"Запланировано на: *{scheduled_at_utc_str}* (UTC)\n" if lang == "ru" else f"Scheduled for: *{scheduled_at_utc_str}* (UTC)\n"
+             preview_header += f"Запланировано на: *{scheduled_at_utc_str}* (UTC)\n" if lang == "ru" else f"Scheduled for: *{scheduled_at_utc_str}* (UTC)\n"
 
 
-    preview_text += "\n" + (content if content else ("_(без текста)_" if lang == "ru" else "_(no text)_"))
+    # Combine header with content
+    final_content = preview_header + "\n" + (content if content else ("_(без текста)_" if lang == "ru" else "_(no text)_"))
+
 
     reply_markup = None
     if buttons:
@@ -1050,71 +1259,53 @@ async def send_post_preview(chat_id: int, state: FSMContext, lang: str):
         # The datetime input message will not be deleted by default here.
         pass # Skipping automatic deletion of previous message to avoid complexity
 
+
         sent_msg = None
-        # Media messages require caption for text and inline buttons
-        # Text-only messages use text and reply_markup
-        # Telegram limitation: cannot use reply_markup (inline keyboard) AND disable_web_page_preview simultaneously on text messages.
-        # If we need buttons on text-only posts, we can't disable link previews unless we send it differently (e.g., as a photo with caption).
-        # Let's allow link previews for simplicity when using buttons.
-
-        send_caption = content if media_type and media_file_id else None # Caption only if there's media
-        send_text = content if not (media_type and media_file_id) else None # Text only if NO media
-
-        # Prepend preview header to the text/caption
-        header_for_content = f"_{TEXTS['confirm_post_preview_text'][lang]}_\n"
-        header_for_content += f"Канал: *{channel_title}*\n" if lang == "ru" else f"Channel: *{channel_title}*\n"
-        if is_scheduled and scheduled_at_utc_str:
-            try:
-                 scheduled_dt_utc = datetime.fromisoformat(scheduled_at_utc_str)
-                 user_tz_str = user_cache.get(chat_id, {}).get("timezone", "UTC") # Get timezone from cache
-                 user_tz = pytz.timezone(user_tz_str) if user_tz_str in pytz.all_timezones_set else pytz.utc
-                 scheduled_dt_local = scheduled_dt_utc.astimezone(user_tz)
-                 scheduled_time_display = scheduled_dt_local.strftime('%d.%m.%Y %H:%M')
-                 header_for_content += f"Запланировано на: *{scheduled_time_display} ({user_tz_str})*\n" if lang == "ru" else f"Scheduled for: *{scheduled_time_display} ({user_tz_str})*\n"
-            except Exception as e:
-                 logger.error(f"Error formatting scheduled time for preview header: {e}")
-                 header_for_content += f"Запланировано на: *{scheduled_at_utc_str}* (UTC)\n" if lang == "ru" else f"Scheduled for: *{scheduled_at_utc_str}* (UTC)\n"
-        header_for_content += "\n" # Add space before actual content
-
-        final_content = header_for_content + (content if content else ("_(без текста)_" if lang == "ru" else "_(no text)_"))
 
         # Telegram maximum caption length is 1024, text is 4096
         if media_type and media_file_id:
              if len(final_content) > 1024:
                   final_content = final_content[:1021] + "..." # Truncate caption
                   logger.warning(f"Truncated caption for post preview {post_db_id if post_db_id else 'new'}.")
+             # Ensure text is None for media posts
+             send_text = None
+             send_caption = final_content
         else:
              if len(final_content) > 4096:
                   final_content = final_content[:4093] + "..." # Truncate text
                   logger.warning(f"Truncated text for post preview {post_db_id if post_db_id else 'new'}.")
+             # Ensure caption is None for text-only posts
+             send_caption = None
+             send_text = final_content
 
 
         if media_type and media_file_id:
             try:
                 if media_type == "photo":
-                    sent_msg = await bot.send_photo(chat_id, media_file_id, caption=final_content, reply_markup=combined_kb, parse_mode="Markdown")
+                    sent_msg = await bot.send_photo(chat_id, media_file_id, caption=send_caption, reply_markup=combined_kb, parse_mode="Markdown")
                 elif media_type == "video":
-                    sent_msg = await bot.send_video(chat_id, media_file_id, caption=final_content, reply_markup=combined_kb, parse_mode="Markdown")
+                    sent_msg = await bot.send_video(chat_id, media_file_id, caption=send_caption, reply_markup=combined_kb, parse_mode="Markdown")
                 elif media_type == "document":
-                     sent_msg = await bot.send_document(chat_id, media_file_id, caption=final_content, reply_markup=combined_kb, parse_mode="Markdown")
+                     sent_msg = await bot.send_document(chat_id, media_file_id, caption=send_caption, reply_markup=combined_kb, parse_mode="Markdown")
                 elif media_type == "audio":
-                     sent_msg = await bot.send_audio(chat_id, media_file_id, caption=final_content, reply_markup=combined_kb, parse_mode="Markdown")
+                     sent_msg = await bot.send_audio(chat_id, media_file_id, caption=send_caption, reply_markup=combined_kb, parse_mode="Markdown")
                 elif media_type == "animation":
-                     sent_msg = await bot.send_animation(chat_id, media_file_id, caption=final_content, reply_markup=combined_kb, parse_mode="Markdown")
+                     sent_msg = await bot.send_animation(chat_id, media_file_id, caption=send_caption, reply_markup=combined_kb, parse_mode="Markdown")
                 else:
                      logger.warning(f"Unknown media type '{media_type}' for preview. Sending as text.")
-                     sent_msg = await bot.send_message(chat_id, final_content, reply_markup=combined_kb, parse_mode="Markdown")
+                     sent_msg = await bot.send_message(chat_id, send_text or " ", reply_markup=combined_kb, parse_mode="Markdown")
 
             except TelegramAPIError as e:
                  logger.error(f"Error sending media preview: {e}")
                  # Fallback to sending text only or show error
-                 # Try sending just the text part without media, and append an error message
-                 fallback_text = f"{final_content}\n\n*Ошибка при отправке медиа.*" if lang == "ru" else f"{final_content}\n\n*Error sending media.*"
+                 fallback_text = f"{send_text}\n\n*Ошибка при отправке медиа.*" if lang == "ru" else f"{send_text}\n\n*Error sending media.*"
+                 # Truncate fallback text if necessary
+                 if len(fallback_text) > 4096: fallback_text = fallback_text[:4093] + "..."
                  sent_msg = await bot.send_message(chat_id, fallback_text, reply_markup=combined_kb, parse_mode="Markdown")
 
         else:
             # Text-only post
-            sent_msg = await bot.send_message(chat_id, final_content, reply_markup=combined_kb, parse_mode="Markdown")
+            sent_msg = await bot.send_message(chat_id, send_text or " ", reply_markup=combined_kb, parse_mode="Markdown")
 
         if sent_msg:
              await state.update_data(preview_msg_id=sent_msg.message_id)
@@ -1137,6 +1328,7 @@ async def cb_confirm_publish(call: types.CallbackQuery, state: FSMContext, lang:
     media_file_id = data.get("media_file_id")
     buttons = data.get("buttons") # This is the list of dicts
     preview_msg_id = data.get("preview_msg_id")
+    post_db_id = data.get("post_db_id") # Check if we are publishing an *existing* scheduled post
 
     # Get channel Telegram ID
     channel_res = supabase.table("channels").select("channel_id").eq("id", channel_db_id).execute()
@@ -1199,12 +1391,11 @@ async def cb_confirm_publish(call: types.CallbackQuery, state: FSMContext, lang:
         send_text = content if not (media_type and media_file_id) else None # Text only if NO media
         send_caption = content if media_type and media_file_id else None # Caption only if there's media
 
-        if media_type and media_file_id:
-            # Truncate caption if too long
-            if send_caption and len(send_caption) > 1024:
-                 send_caption = send_caption[:1021] + "..."
-                 logger.warning(f"Truncated publish caption for new post.")
+        if send_caption and len(send_caption) > 1024: send_caption = send_caption[:1021] + "..."
+        if send_text and len(send_text) > 4096: send_text = send_text[:4093] + "..."
 
+
+        if media_type and media_file_id:
             if media_type == "photo":
                 await bot.send_photo(tg_channel_id, media_file_id, caption=send_caption, reply_markup=reply_markup, parse_mode="Markdown")
             elif media_type == "video":
@@ -1217,36 +1408,64 @@ async def cb_confirm_publish(call: types.CallbackQuery, state: FSMContext, lang:
                 await bot.send_animation(tg_channel_id, media_file_id, caption=send_caption, reply_markup=reply_markup, parse_mode="Markdown")
             else:
                  logger.warning(f"Unknown media type '{media_type}' during publish. Sending as text.")
-                 # Truncate text if too long
-                 if send_text and len(send_text) > 4096:
-                      send_text = send_text[:4093] + "..."
-                      logger.warning(f"Truncated publish text for new post.")
                  await bot.send_message(tg_channel_id, send_text or " ", reply_markup=reply_markup, parse_mode="Markdown") # Send space if empty
 
         else:
             # Text-only post
-            # Truncate text if too long
-            if send_text and len(send_text) > 4096:
-                 send_text = send_text[:4093] + "..."
-                 logger.warning(f"Truncated publish text for new post.")
             await bot.send_message(tg_channel_id, send_text or " ", reply_markup=reply_markup, parse_mode="Markdown") # Send space if empty
 
 
         # Save post to DB with status 'published' (optional, but good practice to record)
-        try:
-            supabase.table("posts").insert({
-                "channel_id": channel_db_id,
-                "user_id": user_id,
-                "content": content,
-                "media_type": media_type,
-                "media_file_id": media_file_id,
-                "buttons_json": json.dumps(buttons) if buttons else None,
-                "status": "published",
-                "scheduled_at": datetime.now(pytz.utc).isoformat() # Record publication time
-            }).execute()
-        except Exception as db_e:
-            logger.error(f"Failed to record published post in DB for user {user_id}: {db_e}")
-            # Don't fail the user interaction just because DB record failed
+        # If this was an existing scheduled post being published now, update its status.
+        # If it's a new post being published now, insert it.
+        if post_db_id:
+             # --- Modified: Update existing post, set status to published, clear job_id ---
+             try:
+                  # Get job_id before updating
+                  res_job = supabase.table("posts").select("job_id").eq("id", post_db_id).execute()
+                  current_job_id = res_job.data[0]["job_id"] if res_job.data else None
+                  # Update
+                  supabase.table("posts").update({
+                      "content": content, # Update content just in case it was edited but not saved to DB yet (shouldn't happen with current flow, but safety)
+                      "media_type": media_type,
+                      "media_file_id": media_file_id,
+                      "buttons_json": json.dumps(buttons) if buttons else None,
+                      "status": "published",
+                      "scheduled_at": datetime.now(pytz.utc).isoformat(), # Record publication time
+                      "job_id": None # Clear job_id
+                  }).eq("id", post_db_id).execute()
+                  logger.info(f"Updated scheduled post {post_db_id} to status 'published'.")
+
+                  # Cancel the job if it existed
+                  if current_job_id:
+                       try:
+                           scheduler.remove_job(current_job_id)
+                           logger.info(f"Cancelled job {current_job_id} for published post {post_db_id}.")
+                       except Exception as e:
+                           logger.error(f"Failed to cancel job {current_job_id} for published post {post_db_id}: {e}")
+
+             except Exception as db_e:
+                  logger.error(f"Failed to update scheduled post {post_db_id} to published status: {db_e}")
+                  # Don't fail the user interaction just because DB record failed
+        else:
+            # --- Modified: Insert new post, job_id is NULL for published posts ---
+            try:
+                supabase.table("posts").insert({
+                    "channel_id": channel_db_id,
+                    "user_id": user_id,
+                    "content": content,
+                    "media_type": media_type,
+                    "media_file_id": media_file_id,
+                    "buttons_json": json.dumps(buttons) if buttons else None,
+                    "status": "published",
+                    "scheduled_at": datetime.now(pytz.utc).isoformat(), # Record publication time
+                    "job_id": None # Published posts have no associated job
+                }).execute()
+                logger.info(f"Recorded new published post in DB for user {user_id}.")
+            except Exception as db_e:
+                logger.error(f"Failed to record new published post in DB for user {user_id}: {db_e}")
+                # Don't fail the user interaction just because DB record failed
+
 
         await call.answer()
         if preview_msg_id:
@@ -1311,12 +1530,26 @@ async def cb_confirm_schedule(call: types.CallbackQuery, state: FSMContext, lang
     buttons = data.get("buttons") # This is the list of dicts
     scheduled_at_utc_str = data.get("scheduled_at")
     preview_msg_id = data.get("preview_msg_id")
+    post_db_id = data.get("post_db_id") # Check if we are scheduling an *existing* post (should be None here)
+
+    # Ensure post_db_id is None, as this is for *new* scheduled posts.
+    # Editing an existing scheduled post to change its time uses a different flow.
+    if post_db_id is not None:
+         logger.error(f"cb_confirm_schedule called with post_db_id={post_db_id}. This handler is for NEW posts.")
+         await call.answer("Произошла внутренняя ошибка.", show_alert=True)
+         await state.finish()
+         # Clean up preview message if exists
+         if preview_msg_id:
+              try: await bot.edit_message_reply_markup(call.message.chat.id, preview_msg_id, reply_markup=None)
+              except: pass
+         return
+
 
     if not scheduled_at_utc_str:
         await call.answer("Ошибка: Время не указано.", show_alert=True)
         logger.error("Scheduled time missing during schedule confirmation.")
         if preview_msg_id:
-             try: await call.message.edit_reply_markup(call.message.chat.id, preview_msg_id, reply_markup=None)
+             try: await bot.edit_message_reply_markup(call.message.chat.id, preview_msg_id, reply_markup=None)
              except: pass
         await state.finish()
         return
@@ -1326,7 +1559,7 @@ async def cb_confirm_schedule(call: types.CallbackQuery, state: FSMContext, lang
     if not res_role.data:
          await call.answer(TEXTS["no_permission"][lang], show_alert=True)
          if preview_msg_id:
-              try: await call.message.edit_reply_markup(call.message.chat.id, preview_msg_id, reply_markup=None)
+              try: await bot.edit_message_reply_markup(call.message.chat.id, preview_msg_id, reply_markup=None)
               except: pass
          await state.finish()
          return
@@ -1335,15 +1568,38 @@ async def cb_confirm_schedule(call: types.CallbackQuery, state: FSMContext, lang
     if not content and not media_file_id:
         await call.answer(TEXTS["post_content_empty"][lang], show_alert=True)
         if preview_msg_id:
-             try: await call.message.edit_reply_markup(call.message.chat.id, preview_msg_id, reply_markup=None)
+             try: await bot.edit_message_reply_markup(call.message.chat.id, preview_msg_id, reply_markup=None)
              except: pass
         await state.finish()
         await bot.send_message(call.from_user.id, TEXTS["post_content_empty"][lang], reply_markup=main_menu_keyboard(lang))
         return
 
+    # Ensure scheduled time is in the future (double check)
+    try:
+        scheduled_dt_utc = datetime.fromisoformat(scheduled_at_utc_str)
+        if scheduled_dt_utc <= datetime.now(pytz.utc):
+            await call.answer("Ошибка: Время в прошлом.", show_alert=True)
+            logger.error(f"Attempted to schedule post in the past: {scheduled_dt_utc}")
+            if preview_msg_id:
+                 try: await bot.edit_message_reply_markup(call.message.chat.id, preview_msg_id, reply_markup=None)
+                 except: pass
+            await state.finish()
+            await bot.send_message(call.from_user.id, TEXTS["invalid_datetime_format"][lang], reply_markup=main_menu_keyboard(lang))
+            return
+    except ValueError:
+        await call.answer("Ошибка формата времени.", show_alert=True)
+        logger.error(f"Invalid datetime format string: {scheduled_at_utc_str}")
+        if preview_msg_id:
+             try: await bot.edit_message_reply_markup(call.message.chat.id, preview_msg_id, reply_markup=None)
+             except: pass
+        await state.finish()
+        await bot.send_message(call.from_user.id, TEXTS["invalid_datetime_format"][lang], reply_markup=main_menu_keyboard(lang))
+        return
+
 
     try:
         # Save post to DB with status 'scheduled'
+        # --- Modified: Insert new post without job_id initially ---
         res_insert = supabase.table("posts").insert({
             "channel_id": channel_db_id,
             "user_id": user_id,
@@ -1352,14 +1608,15 @@ async def cb_confirm_schedule(call: types.CallbackQuery, state: FSMContext, lang
             "media_file_id": media_file_id,
             "buttons_json": json.dumps(buttons) if buttons else None,
             "status": "scheduled",
-            "scheduled_at": scheduled_at_utc_str
+            "scheduled_at": scheduled_at_utc_str,
+            "job_id": None # job_id will be added after APScheduler job is created
         }).execute()
 
         if not res_insert.data:
              await call.answer("Ошибка при сохранении поста.", show_alert=True)
              logger.error(f"Failed to insert scheduled post for user {user_id}: {res_insert.error}")
              if preview_msg_id:
-                 try: await call.message.edit_reply_markup(call.message.chat.id, preview_msg_id, reply_markup=None)
+                 try: await bot.edit_message_reply_markup(call.message.chat.id, preview_msg_id, reply_markup=None)
                  except: pass
              await state.finish()
              await bot.send_message(call.from_user.id, "Ошибка при планировании поста." if lang == "ru" else "Error scheduling post.", reply_markup=main_menu_keyboard(lang))
@@ -1370,19 +1627,31 @@ async def cb_confirm_schedule(call: types.CallbackQuery, state: FSMContext, lang
         scheduled_dt_utc = datetime.fromisoformat(scheduled_at_utc_str)
 
         # Add job to scheduler
+        # --- Modified: Generate unique job ID and capture the result ---
+        job_id_to_use = f"post_{post_db_id}_{scheduled_dt_utc.timestamp()}_{os.urandom(4).hex()}" # Ensure unique ID
         job = scheduler.add_job(
             schedule_post_job,
             trigger=DateTrigger(run_date=scheduled_dt_utc),
             args=[post_db_id],
-            id=f"post_{post_db_id}_{scheduled_dt_utc.timestamp()}", # Generate a unique ID
-            replace_existing=True # Important if somehow a job with this ID already exists (e.g., restart during scheduling)
+            id=job_id_to_use, # Use the generated unique ID
+            replace_existing=True # Use replace_existing just in case, though unique ID should prevent collisions
         )
-        # Update post with job_id
-        supabase.table("posts").update({"job_id": job.id}).eq("id", post_db_id).execute()
+        # --- Modified: Update post with the actual job.id returned by APScheduler ---
+        try:
+             supabase.table("posts").update({"job_id": job.id}).eq("id", post_db_id).execute()
+             logger.info(f"Updated post {post_db_id} with job ID {job.id}.")
+        except Exception as e:
+             logger.error(f"Failed to update job_id {job.id} for post {post_db_id} after scheduling: {e}")
+             # The job is scheduled, but the DB link might be broken. This is a critical consistency issue.
+             # Consider logging this error for manual intervention. The job might run, but rescheduling/cancelling via bot might fail.
+             pass # Continue user flow
+
+
         logger.info(f"Scheduled post {post_db_id} with job ID {job.id} for {scheduled_dt_utc}.")
 
 
         # Format local scheduled time for confirmation message
+        # --- Modified: Get user's timezone from cache based on call.from_user.id ---
         user_tz_str = user_cache.get(call.from_user.id, {}).get("timezone", "UTC")
         user_tz = pytz.timezone(user_tz_str) if user_tz_str in pytz.all_timezones_set else pytz.utc
         scheduled_dt_local = scheduled_dt_utc.astimezone(user_tz)
@@ -1398,6 +1667,9 @@ async def cb_confirm_schedule(call: types.CallbackQuery, state: FSMContext, lang
                       if current_caption_or_text is None: # If no caption, it was a text message
                            current_caption_or_text = (await bot.copy_message(call.message.chat.id, call.message.chat.id, preview_msg_id)).text
                       new_content = (current_caption_or_text or "") + ("\n\n*Запланировано*" if lang=="ru" else "\n\n*Scheduled*")
+                      media_type = data.get("media_type")
+                      media_file_id = data.get("media_file_id")
+
                       if media_type and media_file_id: # Edit caption
                            if len(new_content) > 1024: new_content = new_content[:1021] + "..."
                            await bot.edit_message_caption(chat_id=call.message.chat.id, message_id=preview_msg_id, caption=new_content, parse_mode="Markdown")
@@ -1416,7 +1688,7 @@ async def cb_confirm_schedule(call: types.CallbackQuery, state: FSMContext, lang
         logger.error(f"Unexpected error during scheduling: {e}")
         await call.answer("Произошла внутренняя ошибка.", show_alert=True)
         if preview_msg_id:
-             try: await call.message.edit_reply_markup(call.message.chat.id, preview_msg_id, reply_markup=None)
+             try: await bot.edit_message_reply_markup(call.message.chat.id, preview_msg_id, reply_markup=None)
              except: pass
         await state.finish()
         await bot.send_message(call.from_user.id, "Произошла ошибка при планировании поста." if lang == "ru" else "Error scheduling post.", reply_markup=main_menu_keyboard(lang))
@@ -1426,11 +1698,11 @@ async def cb_confirm_schedule(call: types.CallbackQuery, state: FSMContext, lang
 # These handlers transition back to specific input states
 # This handler is for clicking EDIT buttons on the preview of a *new* post OR a *scheduled* post.
 # It needs to store which post is being edited (new draft vs existing scheduled) and what field.
-@dp.callback_query_handler(lambda c: c.data.startswith("edit_post:") or c.data.startswith("edit_draft:"), state=[PostStates.waiting_for_preview_confirm, ScheduledPostsState.viewing_scheduled_post])
+@dp.callback_query_handler(lambda c: c.data.startswith("edit_post:"), state=[PostStates.waiting_for_preview_confirm, ScheduledPostsState.viewing_scheduled_post])
 async def cb_edit_post_content(call: types.CallbackQuery, state: FSMContext, lang: str, user_id: int):
     await call.answer("Режим редактирования..." if lang == "ru" else "Editing mode...")
     parts = call.data.split(":")
-    edit_context = parts[0] # edit_post or edit_draft
+    # edit_context = parts[0] # edit_post - no longer needed as we removed edit_draft
     edit_type = parts[1] # text, media, buttons, time
     post_db_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() and int(parts[2]) != -1 else None # Use None for new drafts (-1)
 
@@ -1438,6 +1710,7 @@ async def cb_edit_post_content(call: types.CallbackQuery, state: FSMContext, lan
     current_state_data = await state.get_data()
 
     if post_db_id: # Editing an existing scheduled post
+        # --- Modified: Select job_id when fetching post for editing ---
         res = supabase.table("posts").select("*").eq("id", post_db_id).execute()
         if not res.data:
             await call.answer("Пост не найден." if lang == "ru" else "Post not found.", show_alert=True)
@@ -1461,13 +1734,14 @@ async def cb_edit_post_content(call: types.CallbackQuery, state: FSMContext, lan
              scheduled_at=post_data["scheduled_at"], # Keep original schedule time
              post_db_id=post_db_id, # Store post ID indicating we are editing existing
              is_scheduled=True # Always True for editing scheduled post
+             # job_id is not stored in state for editing flow, only retrieved when needed for job management
         )
     else: # Editing a new post (draft) from the preview stage
         # Data is already in the state from the creation flow
-        post_data = current_state_data
         # Set post_db_id to None explicitly to indicate editing a draft
         await state.update_data(post_db_id=None)
-
+        # is_scheduled flag should reflect whether the *new* post was intended to be scheduled
+        # This flag is already in state from cb_schedule_options
 
     # Delete the preview message
     try:
@@ -1477,6 +1751,8 @@ async def cb_edit_post_content(call: types.CallbackQuery, state: FSMContext, lan
         pass
 
     # Transition to the correct state based on edit_type
+    # Note: Input handlers for these states now need to check for post_db_id
+    # and either update DB (if post_db_id is not None) or just update state (if post_db_id is None).
     if edit_type == "text":
         await PostStates.waiting_for_text.set() # Re-use the same state
         # No need to store post_db_id again, it's already in state
@@ -1492,6 +1768,8 @@ async def cb_edit_post_content(call: types.CallbackQuery, state: FSMContext, lan
     elif edit_type == "time" and post_db_id: # Only for existing scheduled posts
          # This is the transition that caused the error, now the state exists
          await ScheduledPostsState.waiting_for_datetime.set() # Use a separate state for scheduled post editing time
+         # Ensure post_db_id is in state for the handler
+         await state.update_data(post_db_id=post_db_id)
          prompt = TEXTS["prompt_schedule_datetime"][lang].format(timezone=user_cache.get(user_id, {}).get("timezone", "UTC"))
          await bot.send_message(call.from_user.id, prompt)
     else:
@@ -1499,125 +1777,25 @@ async def cb_edit_post_content(call: types.CallbackQuery, state: FSMContext, lan
         # Should return to preview or main menu? Let's go back to the original context if possible
         if post_db_id: # Was editing a scheduled post
              await ScheduledPostsState.viewing_scheduled_post.set()
+             # Re-fetch post data as editing state might have cleared it
              await view_scheduled_post_by_id(call.from_user.id, post_db_id, lang, user_id) # Show original preview
         else: # Was editing a new draft
              await PostStates.waiting_for_preview_confirm.set()
+             # send_post_preview uses data from state, which was preserved
              await send_post_preview(call.from_user.id, state, lang) # Show original preview
 
 
-# Need handlers for input after editing states
+# Handlers for input after editing states (text, media, buttons)
 # These handlers will receive the *new* input after the user clicked an 'edit' button
 # and entered the new content. They need to save the new content to state, and then
-# return to the appropriate preview state.
-@dp.message_handler(content_types=ContentType.TEXT, state=[PostStates.waiting_for_text, PostStates.waiting_for_button_text, PostStates.waiting_for_button_url])
-@dp.message_handler(content_types=[ContentType.PHOTO, ContentType.VIDEO, ContentType.DOCUMENT, ContentType.AUDIO, ContentType.ANIMATION, ContentType.TEXT], state=PostStates.waiting_for_media)
-async def handle_edit_input(message: types.Message, state: FSMContext, lang: str, user_id: int):
-     current_state = await state.get_state()
-     data = await state.get_data()
-     post_db_id = data.get("post_db_id") # Check if we were editing an existing scheduled post
-
-     # Process the input based on the current state, updating state data
-     if current_state == PostStates.waiting_for_text.state:
-         await state.update_data(content=message.text)
-     elif current_state == PostStates.waiting_for_media.state:
-         if message.content_type == ContentType.TEXT and message.text.lower().strip() in ["/skip", "скип", "пропустить"]:
-              await state.update_data(media_type=None, media_file_id=None)
-         elif message.content_type != ContentType.TEXT:
-              caption = message.caption or ""
-              current_content = data.get("content", "") # Get content entered previously (text or old caption)
-              if caption:
-                  if current_content:
-                       current_content += "\n\n" + caption
-                  else:
-                       current_content = caption
-              media_type = None
-              file_id = None
-              if message.photo: media_type, file_id = "photo", message.photo[-1].file_id
-              elif message.video: media_type, file_id = "video", message.video.file_id
-              elif message.document: media_type, file_id = "document", message.document.file_id
-              elif message.audio: media_type, file_id = "audio", message.audio.file_id
-              elif message.animation: media_type, file_id = "animation", message.animation.file_id
-              await state.update_data(content=current_content, media_type=media_type, media_file_id=file_id)
-         else:
-              await message.reply(TEXTS["invalid_input"][lang])
-              return # Stay in media state if invalid input
-
-     elif current_state == PostStates.waiting_for_button_text.state:
-          # User entered button text, now need URL. This state should transition to waiting_for_button_url
-          # if it wasn't a /skip. Re-use button_text_received logic.
-          await button_text_received(message, state, lang) # This handler updates state and changes state
-          return # Exit, as button_text_received handles the next step
-
-     elif current_state == PostStates.waiting_for_button_url.state:
-          # User entered button URL. Re-use button_url_received logic.
-          await button_url_received(message, state, lang) # This handler updates state and changes state
-          return # Exit, as button_url_received handles the next step
-
-     # After processing input, decide where to go next
-     data = await state.get_data() # Re-fetch state data after update
-
-     if post_db_id is not None:
-        # If we were editing an existing scheduled post, update DB and return to scheduled post preview
-        try:
-             update_data = {
-                 "content": data.get("content"),
-                 "media_type": data.get("media_type"),
-                 "media_file_id": data.get("media_file_id"),
-                 "buttons_json": json.dumps(data.get("buttons")) if data.get("buttons") is not None else None, # Save empty list as None
-             }
-             supabase.table("posts").update(update_data).eq("id", post_db_id).execute()
-
-             # Return to viewing the scheduled post
-             await ScheduledPostsState.viewing_scheduled_post.set()
-             # Re-fetch post data to ensure we show the latest version including the update
-             await view_scheduled_post_by_id(message.chat.id, post_db_id, lang, user_id)
-        except Exception as e:
-             logger.error(f"Failed to update scheduled post {post_db_id} after content edit input: {e}")
-             await message.reply("Ошибка при сохранении изменений." if lang == "ru" else "Error saving changes.", reply_markup=main_menu_keyboard(lang))
-             await state.finish()
-     else:
-        # If we were editing a new draft, go back to the preview state for the new post
-        # Need to update the is_scheduled flag as the next step from editing might be scheduling
-        # After editing, the user should confirm the preview and choose schedule/publish again.
-        # The next logical step after editing content (text/media) is showing the preview again.
-        await PostStates.waiting_for_preview_confirm.set()
-        await send_post_preview(message.chat.id, state, lang)
-
-# Handler for callbacks after editing buttons (Yes/No Add More) - these also need to return to preview
-@dp.callback_query_handler(lambda c: c.data in ["add_btn_yes", "add_btn_no"], state=PostStates.waiting_for_add_more_buttons)
-async def handle_edit_buttons_add_more(call: types.CallbackQuery, state: FSMContext, lang: str, user_id: int):
-    data = await state.get_data()
-    post_db_id = data.get("post_db_id")
-
-    if call.data == "add_btn_yes":
-        # Re-enter button text state - handled by cb_add_button_yes
-        await cb_add_button_yes(call, state, lang)
-        return # Exit, as cb_add_button_yes handles the state transition
-
-    elif call.data == "add_btn_no":
-        # No more buttons, proceed to preview/confirm state
-        await call.answer()
-        try: await call.message.delete()
-        except: await call.message.edit_reply_markup(reply_markup=None)
-
-        if post_db_id is not None:
-             # Update DB for scheduled post
-             try:
-                  update_data = {"buttons_json": json.dumps(data.get("buttons")) if data.get("buttons") is not None else None}
-                  supabase.table("posts").update(update_data).eq("id", post_db_id).execute()
-
-                  await ScheduledPostsState.viewing_scheduled_post.set()
-                  await view_scheduled_post_by_id(call.from_user.id, post_db_id, lang, user_id) # Show updated preview
-             except Exception as e:
-                  logger.error(f"Failed to update buttons for scheduled post {post_db_id} after edit: {e}")
-                  await bot.send_message(call.from_user.id, "Ошибка при сохранении изменений." if lang == "ru" else "Error saving changes.", reply_markup=main_menu_keyboard(lang))
-                  await state.finish()
-        else:
-             # Return to new post preview
-             await PostStates.waiting_for_preview_confirm.set()
-             await send_post_preview(call.from_user.id, state, lang)
+# return to the appropriate preview state or update DB.
+# Note: These handlers are integrated into the original input handlers (post_text_received, post_media_received, etc.)
+# They check for `post_db_id` in state to determine if editing a new draft or existing scheduled post.
+# The logic to update DB and return to ScheduledPostsState.viewing_scheduled_post
+# or just update state and return to PostStates.waiting_for_preview_confirm is added there.
 
 
+# Handler for datetime input specifically when editing an *existing* scheduled post
 @dp.message_handler(content_types=ContentType.TEXT, state=ScheduledPostsState.waiting_for_datetime)
 async def scheduled_post_datetime_received(message: types.Message, state: FSMContext, lang: str, user_id: int, timezone: str):
     """Handle new datetime input when editing a scheduled post."""
@@ -1657,9 +1835,12 @@ async def scheduled_post_datetime_received(message: types.Message, state: FSMCon
 
     try:
         # Update post in DB with new scheduled time
-        supabase.table("posts").update({"scheduled_at": scheduled_at_utc_str}).eq("id", post_db_id).execute()
+        # --- Modified: Update scheduled_at and clear job_id temporarily ---
+        # Clear job_id first to avoid race conditions or issues with old job_id if APScheduler updates DB
+        supabase.table("posts").update({"scheduled_at": scheduled_at_utc_str, "job_id": None}).eq("id", post_db_id).execute()
 
         # Update scheduler job (cancel old, add new)
+        # --- Modified: Pass new scheduled_at_utc_str ---
         await update_scheduled_post_job(post_db_id, scheduled_at_utc_str)
 
         # Return to viewing the scheduled post with updated time
@@ -1674,11 +1855,13 @@ async def scheduled_post_datetime_received(message: types.Message, state: FSMCon
 
 async def update_scheduled_post_job(post_db_id: int, new_scheduled_at_utc_str: str):
     """Cancels old scheduler job for a post and creates a new one."""
+    # --- Modified: Select job_id here ---
     res = supabase.table("posts").select("job_id").eq("id", post_db_id).execute()
     old_job_id = res.data[0]["job_id"] if res.data and res.data[0] and res.data[0].get("job_id") else None
 
     if old_job_id:
         try:
+            # Remove job by its ID
             scheduler.remove_job(old_job_id)
             logger.info(f"Cancelled old scheduler job {old_job_id} for post {post_db_id}")
         except Exception as e:
@@ -1689,15 +1872,18 @@ async def update_scheduled_post_job(post_db_id: int, new_scheduled_at_utc_str: s
     now_utc = datetime.now(pytz.utc)
 
     if new_scheduled_dt_utc > now_utc:
+        # --- Modified: Generate unique job ID and capture result ---
+        new_job_id_to_use = f"post_{post_db_id}_{new_scheduled_dt_utc.timestamp()}_{os.urandom(4).hex()}" # Generate unique ID for the new job
         job = scheduler.add_job(
             schedule_post_job,
             trigger=DateTrigger(run_date=new_scheduled_dt_utc),
             args=[post_db_id],
-            id=f"post_{post_db_id}_{new_scheduled_dt_utc.timestamp()}", # Generate a unique ID
-            replace_existing=True # Use replace_existing just in case, though unique ID should prevent collisions
+            id=new_job_id_to_use, # Use the new unique ID
+            replace_existing=True # Use replace_existing just in case
         )
-        # Update post with new job_id
+        # --- Modified: Update post with the new job.id returned by APScheduler ---
         try:
+             # Also ensure status is 'scheduled' if it was potentially changed during error handling
              supabase.table("posts").update({"job_id": job.id, "status": "scheduled"}).eq("id", post_db_id).execute()
              logger.info(f"Added new scheduler job {job.id} for post {post_db_id} at {new_scheduled_dt_utc}.")
         except Exception as e:
@@ -1706,9 +1892,10 @@ async def update_scheduled_post_job(post_db_id: int, new_scheduled_at_utc_str: s
 
     else:
          # New time is in the past (should be caught by validation, but double check)
-         # Mark post as draft and remove job_id
-         logger.warning(f"Scheduled time for post {post_db_id} is in the past ({new_scheduled_dt_utc}). Marking as draft.")
+         # Mark post as draft and remove job_id (already cleared above, but safety)
+         logger.warning(f"Rescheduled time for post {post_db_id} is in the past ({new_scheduled_dt_utc}). Marking as draft.")
          try:
+             # --- Modified: Ensure job_id is None when marking as draft ---
              supabase.table("posts").update({"status": "draft", "job_id": None}).eq("id", post_db_id).execute()
          except Exception as e:
               logger.error(f"Failed to mark post {post_db_id} as draft after past rescheduling time: {e}")
@@ -1741,9 +1928,29 @@ async def view_scheduled_posts_menu(message: types.Message, state: FSMContext, l
          await message.reply(TEXTS["no_scheduled_posts"][lang]) # Re-use text
          return
 
-    if len(channels_list) > 1:
+    # --- Added: Check if there are any scheduled posts at all before asking to choose channel ---
+    now_utc = datetime.now(pytz.utc)
+    # --- Modified: Select job_id here as well for potential future use ---
+    res_any_scheduled = supabase.table("posts").select("id, channel_id, job_id").eq("status", "scheduled").gt("scheduled_at", now_utc.isoformat()).in_("channel_id", channel_db_ids).execute()
+    any_scheduled_posts = res_any_scheduled.data or []
+
+    if not any_scheduled_posts:
+         await message.reply(TEXTS["no_scheduled_posts"][lang])
+         return
+
+    # Filter channels_list to only include channels that actually have scheduled posts
+    channels_with_scheduled = {p["channel_id"] for p in any_scheduled_posts}
+    channels_list_filtered = [ch for ch in channels_list if ch["id"] in channels_with_scheduled]
+
+    if not channels_list_filtered:
+         # Should theoretically not happen if any_scheduled_posts is not empty, but safety
+         await message.reply(TEXTS["no_scheduled_posts"][lang])
+         return
+
+
+    if len(channels_list_filtered) > 1:
         kb = InlineKeyboardMarkup()
-        for ch in channels_list:
+        for ch in channels_list_filtered:
              # Cache channel info
             channel_cache[ch["id"]] = channel_cache.get(ch["id"], {})
             channel_cache[ch["id"]]["title"] = ch["title"]
@@ -1752,8 +1959,8 @@ async def view_scheduled_posts_menu(message: types.Message, state: FSMContext, l
         await state.update_data(select_msg_id=msg.message_id) # Store message ID for cleanup
         await ScheduledPostsState.waiting_for_channel_selection.set() # Add state for channel selection
     else:
-        # Only one channel, show scheduled posts directly
-        chan_db_id = channels_list[0]["id"]
+        # Only one channel with scheduled posts, show scheduled posts directly
+        chan_db_id = channels_list_filtered[0]["id"]
         # No state needed for channel selection if only one channel
         await send_scheduled_posts_list(message.chat.id, chan_db_id, lang, user_id)
 
@@ -1768,7 +1975,7 @@ async def cb_choose_scheduled_channel(call: types.CallbackQuery, state: FSMConte
         await call.answer(TEXTS["no_permission"][lang], show_alert=True)
         await state.finish() # Exit flow if no permission
         try: await call.message.delete() # Clean up message
-        except: pass
+        except: await call.message.edit_reply_markup(reply_markup=None)
         return
 
     await call.answer()
@@ -1789,7 +1996,8 @@ async def send_scheduled_posts_list(chat_id: int, channel_db_id: int, lang: str,
     title = res_ch.data[0]["title"] if res_ch.data else "Channel"
     # Fetch scheduled posts that are in the future
     now_utc = datetime.now(pytz.utc)
-    res_posts = supabase.table("posts").select("id, content, scheduled_at").eq("channel_id", channel_db_id).eq("status", "scheduled").gt("scheduled_at", now_utc.isoformat()).order("scheduled_at").execute()
+    # --- Modified: Select job_id here ---
+    res_posts = supabase.table("posts").select("id, content, scheduled_at, job_id").eq("channel_id", channel_db_id).eq("status", "scheduled").gt("scheduled_at", now_utc.isoformat()).order("scheduled_at").execute()
     scheduled_posts = res_posts.data or []
 
     if not scheduled_posts:
@@ -1799,6 +2007,7 @@ async def send_scheduled_posts_list(chat_id: int, channel_db_id: int, lang: str,
     header_text = TEXTS["scheduled_posts_header"][lang].format(channel=title)
     await bot.send_message(chat_id, header_text)
 
+    # --- Modified: Get user's timezone correctly from cache based on chat_id/user_id ---
     user_tz_str = user_cache.get(chat_id, {}).get("timezone", "UTC")
     user_tz = pytz.timezone(user_tz_str) if user_tz_str in pytz.all_timezones_set else pytz.utc
 
@@ -1815,18 +2024,24 @@ async def send_scheduled_posts_list(chat_id: int, channel_db_id: int, lang: str,
         scheduled_dt_local = scheduled_dt_utc.astimezone(user_tz)
         scheduled_time_display = scheduled_dt_local.strftime('%d.%m.%Y %H:%M')
 
+        # --- Modified: Add job_id to summary for debugging/info if needed (optional) ---
+        # job_id_display = post.get("job_id", "N/A")[:8] + "..." if post.get("job_id") else "N/A"
+        # post_summary = f"ID: `{post_id}` | Job: `{job_id_display}` | {scheduled_time_display} ({user_tz_str})\n{content_snippet}"
+
         post_summary = f"ID: `{post_id}` | {scheduled_time_display} ({user_tz_str})\n{content_snippet}"
+
 
         kb = InlineKeyboardMarkup()
         kb.add(InlineKeyboardButton("👁️ " + ("Просмотр" if lang == "ru" else "View"), callback_data=f"view_scheduled:{post_id}"))
         if user_role in ["owner", "editor"]:
              kb.add(InlineKeyboardButton("✏️ " + ("Редактировать" if lang == "ru" else "Edit"), callback_data=f"edit_scheduled:{post_id}"))
+             # --- Modified: Call delete_scheduled with post_id ---
              kb.add(InlineKeyboardButton("🗑️ " + ("Удалить" if lang == "ru" else "Delete"), callback_data=f"delete_scheduled:{post_id}"))
 
         await bot.send_message(chat_id, post_summary, reply_markup=kb, parse_mode="Markdown")
 
 
-@dp.callback_query_handler(lambda c: c.data.startswith("view_scheduled:"))
+@dp.callback_query_handler(lambda c: c.data.startswith("view_scheduled:"), state=[None, ScheduledPostsState.waiting_for_channel_selection])
 async def cb_view_scheduled_post(call: types.CallbackQuery, state: FSMContext, lang: str, user_id: int):
     await call.answer("Загрузка поста..." if lang == "ru" else "Loading post...")
     post_id = int(call.data.split(":")[1])
@@ -1837,14 +2052,18 @@ async def cb_view_scheduled_post(call: types.CallbackQuery, state: FSMContext, l
     except:
          await call.message.edit_reply_markup(reply_markup=None) # Fallback
 
+    # --- Modified: Ensure view_scheduled_post_by_id fetches all necessary data including job_id if needed ---
     await view_scheduled_post_by_id(call.from_user.id, post_id, lang, user_id)
     # Set state after successful fetch and send
+    # Need to finish the previous state (e.g., waiting_for_channel_selection) before setting viewing state
+    await state.finish()
     await ScheduledPostsState.viewing_scheduled_post.set()
     await state.update_data(post_db_id=post_id) # Store post ID in state
 
 
 async def view_scheduled_post_by_id(chat_id: int, post_id: int, lang: str, user_id: int):
     """Helper to fetch and send a single scheduled post preview."""
+    # --- Modified: Select job_id here ---
     res = supabase.table("posts").select("*").eq("id", post_id).execute()
     if not res.data:
         await bot.send_message(chat_id, "Пост не найден." if lang == "ru" else "Post not found.", reply_markup=main_menu_keyboard(lang))
@@ -1852,6 +2071,7 @@ async def view_scheduled_post_by_id(chat_id: int, post_id: int, lang: str, user_
 
     post = res.data[0]
     channel_db_id = post["channel_id"]
+    # job_id = post.get("job_id") # Get job_id for display if needed
 
     # Verify user has access
     res_access = supabase.table("channel_editors").select("role").eq("channel_id", channel_db_id).eq("user_id", user_id).execute()
@@ -1864,6 +2084,7 @@ async def view_scheduled_post_by_id(chat_id: int, post_id: int, lang: str, user_
     channel_res = supabase.table("channels").select("title").eq("id", channel_db_id).execute()
     channel_title = channel_res.data[0]["title"] if channel_res.data else "Channel"
     scheduled_dt_utc = datetime.fromisoformat(post["scheduled_at"])
+    # --- Modified: Get user's timezone correctly from cache based on chat_id/user_id ---
     user_tz_str = user_cache.get(chat_id, {}).get("timezone", "UTC")
     user_tz = pytz.timezone(user_tz_str) if user_tz_str in pytz.all_timezones_set else pytz.utc
     scheduled_dt_local = scheduled_dt_utc.astimezone(user_tz)
@@ -1906,10 +2127,15 @@ async def view_scheduled_post_by_id(chat_id: int, post_id: int, lang: str, user_
 
 
     # Truncate content if too long for preview
+    final_content = preview_text
     if post["media_type"] and post["media_file_id"]:
-         if len(preview_text) > 1024: preview_text = preview_text[:1021] + "..."
+         if len(final_content) > 1024: final_content = final_content[:1021] + "..."
+         send_caption = final_content
+         send_text = None
     else:
-         if len(preview_text) > 4096: preview_text = preview_text[:4093] + "..."
+         if len(final_content) > 4096: final_content = final_content[:4093] + "..."
+         send_text = final_content
+         send_caption = None
 
 
     try:
@@ -1917,27 +2143,29 @@ async def view_scheduled_post_by_id(chat_id: int, post_id: int, lang: str, user_
         if post["media_type"] and post["media_file_id"]:
             try:
                 if post["media_type"] == "photo":
-                    sent_msg = await bot.send_photo(chat_id, post["media_file_id"], caption=preview_text, reply_markup=combined_kb, parse_mode="Markdown")
+                    sent_msg = await bot.send_photo(chat_id, post["media_file_id"], caption=send_caption, reply_markup=combined_kb, parse_mode="Markdown")
                 elif post["media_type"] == "video":
-                    sent_msg = await bot.send_video(chat_id, post["media_file_id"], caption=preview_text, reply_markup=combined_kb, parse_mode="Markdown")
+                    sent_msg = await bot.send_video(chat_id, post["media_file_id"], caption=send_caption, reply_markup=combined_kb, parse_mode="Markdown")
                 elif post["media_type"] == "document":
-                    sent_msg = await bot.send_document(chat_id, post["media_file_id"], caption=preview_text, reply_markup=combined_kb, parse_mode="Markdown")
+                    sent_msg = await bot.send_document(chat_id, post["media_file_id"], caption=send_caption, reply_markup=combined_kb, parse_mode="Markdown")
                 elif post["media_type"] == "audio":
-                    sent_msg = await bot.send_audio(chat_id, post["media_file_id"], caption=preview_text, reply_markup=combined_kb, parse_mode="Markdown")
+                    sent_msg = await bot.send_audio(chat_id, post["media_file_id"], caption=send_caption, reply_markup=combined_kb, parse_mode="Markdown")
                 elif post["media_type"] == "animation":
-                    sent_msg = await bot.send_animation(chat_id, post["media_file_id"], caption=preview_text, reply_markup=combined_kb, parse_mode="Markdown")
+                    sent_msg = await bot.send_animation(chat_id, post["media_file_id"], caption=send_caption, reply_markup=combined_kb, parse_mode="Markdown")
                 else:
                     logger.warning(f"Unknown media type '{post['media_type']}' for scheduled post preview {post_id}. Sending as text.")
-                    sent_msg = await bot.send_message(chat_id, preview_text, reply_markup=combined_kb, parse_mode="Markdown")
+                    sent_msg = await bot.send_message(chat_id, send_text or " ", reply_markup=combined_kb, parse_mode="Markdown")
 
             except TelegramAPIError as e:
                 logger.error(f"Error sending scheduled post {post_id} media preview: {e}")
                 # Fallback to sending text only or show error
-                fallback_text = f"{preview_text}\n\n*Ошибка при отправке медиа.*" if lang == "ru" else f"{preview_text}\n\n*Error sending media.*"
+                fallback_text = f"{send_text or send_caption}\n\n*Ошибка при отправке медиа.*" if lang == "ru" else f"{send_text or send_caption}\n\n*Error sending media.*"
+                # Truncate fallback text if necessary
+                if len(fallback_text) > 4096: fallback_text = fallback_text[:4093] + "..."
                 sent_msg = await bot.send_message(chat_id, fallback_text, reply_markup=combined_kb, parse_mode="Markdown")
 
         else:
-            sent_msg = await bot.send_message(chat_id, preview_text, reply_markup=combined_kb, parse_mode="Markdown")
+            sent_msg = await bot.send_message(chat_id, send_text or " ", reply_markup=combined_kb, parse_mode="Markdown")
 
         if sent_msg:
              # Store message ID for editing/deleting later if needed in this state
@@ -1955,22 +2183,28 @@ async def cb_back_to_scheduled_list(call: types.CallbackQuery, state: FSMContext
     await call.answer()
     data = await state.get_data()
     post_db_id = data.get("post_db_id")
+    # Get the channel ID from the state data
+    channel_db_id = data.get("channel_id")
+
 
     # Delete the preview message
     try: await call.message.delete()
     except: await call.message.edit_reply_markup(reply_markup=None) # Clean up preview message
 
-    if post_db_id:
+    await state.finish() # Exit viewing state
+
+    # Use the channel_db_id from state if available, otherwise try to fetch from DB (less reliable)
+    if channel_db_id:
+         await send_scheduled_posts_list(call.from_user.id, channel_db_id, lang, user_id)
+         return
+    elif post_db_id: # Fallback: try to get channel_id from DB using post_id
         res = supabase.table("posts").select("channel_id").eq("id", post_db_id).execute()
         if res.data:
-            channel_db_id = res.data[0]["channel_id"]
-            await state.finish() # Exit viewing state
-            # Re-send the list for this channel
-            await send_scheduled_posts_list(call.from_user.id, channel_db_id, lang, user_id)
+            channel_db_id_fallback = res.data[0]["channel_id"]
+            await send_scheduled_posts_list(call.from_user.id, channel_db_id_fallback, lang, user_id)
             return
 
     # If post_id or channel_id missing, just go to main menu
-    await state.finish()
     await bot.send_message(call.from_user.id, TEXTS["menu_prompt"][lang], reply_markup=main_menu_keyboard(lang))
 
 
@@ -1995,6 +2229,7 @@ async def cb_edit_scheduled_post(call: types.CallbackQuery, state: FSMContext, l
 
     # Keep state as viewing_scheduled_post, but change the keyboard to edit options
     # Also need to load post data into state so edit handlers can access it
+    # --- Modified: Select job_id when fetching post for editing ---
     post_res = supabase.table("posts").select("*").eq("id", post_id).execute()
     if not post_res.data:
          await call.answer("Пост не найден." if lang == "ru" else "Post not found.", show_alert=True)
@@ -2003,6 +2238,7 @@ async def cb_edit_scheduled_post(call: types.CallbackQuery, state: FSMContext, l
          except: pass
          return
     post_data = post_res.data[0]
+    # --- Modified: Ensure post_db_id, channel_id, etc are in state for subsequent editing steps ---
     await state.update_data(
         post_db_id=post_id, # Ensure post_id is in state
         channel_id=post_data["channel_id"],
@@ -2012,6 +2248,7 @@ async def cb_edit_scheduled_post(call: types.CallbackQuery, state: FSMContext, l
         buttons=json.loads(post_data["buttons_json"]) if post_data["buttons_json"] else [],
         scheduled_at=post_data["scheduled_at"],
         is_scheduled=True # It is a scheduled post
+        # No need to store job_id in state here
     )
 
 
@@ -2024,11 +2261,13 @@ async def cb_edit_scheduled_post(call: types.CallbackQuery, state: FSMContext, l
          await bot.send_message(call.from_user.id, TEXTS["edit_scheduled_post_options"][lang], reply_markup=kb)
 
 
-@dp.callback_query_handler(lambda c: c.data.startswith("delete_scheduled:"), state=[ScheduledPostsState.viewing_scheduled_post, None]) # Allow deleting from list or view
+@dp.callback_query_handler(lambda c: c.data.startswith("delete_scheduled:"), state=[ScheduledPostsState.viewing_scheduled_post, ScheduledPostsState.waiting_for_channel_selection, None]) # Allow deleting from list, view, or even no state if callback is old
 async def cb_delete_scheduled_post(call: types.CallbackQuery, state: FSMContext, lang: str, user_id: int):
+     # --- Modified: Extract post_id ---
      post_id = int(call.data.split(":")[1])
 
      # Verify user has edit permission (owner/editor) for this channel
+     # --- Modified: Select job_id here to cancel the job ---
      res = supabase.table("posts").select("channel_id, job_id").eq("id", post_id).execute()
      if not res.data:
         await call.answer("Пост не найден." if lang == "ru" else "Post not found.", show_alert=True)
@@ -2038,11 +2277,17 @@ async def cb_delete_scheduled_post(call: types.CallbackQuery, state: FSMContext,
              await state.finish()
              try: await call.message.delete() # Clean up old preview message
              except: pass
+        # If state was waiting_for_channel_selection, finish it
+        elif current_state == ScheduledPostsState.waiting_for_channel_selection.state:
+             await state.finish() # Exit this state
+             try: await call.message.delete() # Clean up the list item message
+             except: pass
+
         return
 
      post_info = res.data[0]
      channel_db_id = post_info["channel_id"]
-     job_id = post_info["job_id"]
+     job_id = post_info["job_id"] # Get job_id from DB
 
      res_role = supabase.table("channel_editors").select("role").eq("channel_id", channel_db_id).eq("user_id", user_id).in_("role", ["owner", "editor"]).execute()
      if not res_role.data:
@@ -2052,6 +2297,7 @@ async def cb_delete_scheduled_post(call: types.CallbackQuery, state: FSMContext,
      # Cancel scheduler job
      if job_id:
          try:
+             # Use the job_id retrieved from the DB
              scheduler.remove_job(job_id)
              logger.info(f"Cancelled scheduler job {job_id} for post {post_id} deletion.")
          except Exception as e:
@@ -2076,11 +2322,17 @@ async def cb_delete_scheduled_post(call: types.CallbackQuery, state: FSMContext,
          except: await call.message.edit_reply_markup(reply_markup=None)
          await state.finish() # Exit the viewing state
          await bot.send_message(call.from_user.id, TEXTS["scheduled_post_deleted"][lang], reply_markup=main_menu_keyboard(lang))
-     else:
-         # If deleting from the list view (call.message is one of the list items)
-         try: await call.message.delete() # Delete the post item from the list
-         except: pass # Ignore if message is gone
-         # No state change needed if not in viewing state
+     elif current_state == ScheduledPostsState.waiting_for_channel_selection.state:
+          # If deleting from the list view (message is one of the list items)
+          try: await call.message.delete() # Delete the post item from the list
+          except: pass # Ignore if message is gone
+          # No state change needed here, the list view state remains active until user chooses a channel or cancels
+     else: # Deleting from no state (old message)
+          # Delete the list item message if it was an old list item
+          try: await call.message.delete()
+          except: pass
+          # Send main menu as the flow is broken
+          await bot.send_message(call.from_user.id, TEXTS["menu_prompt"][lang], reply_markup=main_menu_keyboard(lang))
 
 
 # --- Manage Channels Flow ---
@@ -2499,7 +2751,7 @@ async def cb_confirm_remove_user(call: types.CallbackQuery, lang: str, user_id: 
              role_text = TEXTS["role_editor"][lang] if role == "editor" else TEXTS["role_viewer"][lang]
              btn_text = f"{name} ({role_text})"
              kb.add(InlineKeyboardButton(btn_text, callback_data=f"confirmremedit:{chan_db_id}:{uid}"))
-        kb.add(InlineKeyboardButton("⬅️ " + ("Назад" if lang == "ru" else "Back"), callback_data=f"manage:{chan_db_id}"))
+        kb.add(InlineKeyboardButton("⬅️ " + ("Назад" if lang == "ru" else "Back"), callback_data=f"remedit:{chan_db_id}"))
         try: await call.message.edit_text(TEXTS["remove_editor_prompt"][lang], reply_markup=kb)
         except: pass
         return
@@ -2598,10 +2850,12 @@ async def cb_delete_channel(call: types.CallbackQuery, lang: str, user_id: int):
 
     try:
         # Get job_ids for scheduled posts in this channel to cancel them
-        res_posts = supabase.table("posts").select("job_id").eq("channel_id", chan_db_id).eq("status", "scheduled").execute()
+        # --- Modified: Select job_id here ---
+        res_posts = supabase.table("posts").select("job_id").eq("channel_id", chan_db_id).execute() # Check all posts for job_id just in case
         for post in res_posts.data or []:
-            if post["job_id"]:
+            if post.get("job_id"): # Use .get() for safety
                 try:
+                    # Remove job by its ID
                     scheduler.remove_job(post["job_id"])
                     logger.info(f"Cancelled scheduler job {post['job_id']} for channel deletion.")
                 except Exception as e:
@@ -2728,6 +2982,8 @@ async def timezone_received(message: types.Message, state: FSMContext, lang: str
               valid_timezone = parsed_dt.tzinfo.zone
          elif str(parsed_dt.tzinfo).startswith('UTC'):
               # Handle simple UTC offsets returned by dateparser
+              # We should store UTC offsets like 'UTC+03:00' or 'Etc/GMT-3' consistently
+              # dateparser often returns 'UTC+HH:MM'
               valid_timezone = str(parsed_dt.tzinfo) # e.g., 'UTC+03:00'
               # Try converting 'UTC+03:00' style to Etc/GMT style for better compatibility if needed
               try:
@@ -2752,36 +3008,41 @@ async def timezone_received(message: types.Message, state: FSMContext, lang: str
          else:
              # Try UTC±HH:MM format explicitly if pytz name check fails
              try:
-                  # pytz.timezone() might handle some UTC offsets, but documentation suggests standard names
-                  # We can attempt to create a timezone object directly for robustness
-                  # This is complex, let's rely on dateparser or standard pytz names for now.
-                  # Re-checking simple UTC format like UTC+3, UTC-5 etc.
-                  if timezone_str.upper().startswith('UTC'):
-                      offset_part = timezone_str[3:].strip()
-                      if not offset_part: # Just 'UTC'
+                  import re
+                  # Match UTC, GMT, or Z (for UTC+0) followed by optional +/-HH:MM or +/-HH
+                  match = re.match(r'^(UTC|GMT|Z)([+-]\d{1,2})?(:(\d{2}))?$', timezone_str.upper())
+                  if match:
+                      base = match.group(1)
+                      offset_sign_hours = match.group(2)
+                      offset_minutes = match.group(4)
+
+                      if base == 'Z' or (base in ['UTC', 'GMT'] and offset_sign_hours is None):
+                          # UTC or GMT or Z without offset means UTC+0
                           valid_timezone = 'UTC'
-                      else:
-                           # Check for +/-HH or +/-HH:MM
-                           import re
-                           match = re.match(r'([+-]\d{1,2})(:(\d{2}))?$', offset_part)
-                           if match:
-                                hours = int(match.group(1))
-                                minutes = int(match.group(3)) if match.group(3) else 0
-                                if abs(hours) <= 14 and minutes >= 0 and minutes < 60: # Max UTC offset is around +/- 14
-                                     # Create a fixed offset timezone string like 'UTC+03:00'
-                                     sign = '+' if hours >= 0 else '-'
-                                     valid_timezone = f"UTC{sign}{abs(hours):02d}:{minutes:02d}"
-                                     # Note: This 'UTC+HH:MM' format is *not* a standard pytz name, but can be stored
-                                     # and potentially used by dateparser or custom logic later.
-                                     # Using standard names like 'Etc/GMT+X' is preferable if possible.
-                                     # Let's prefer standard names. If 'Etc/GMT' conversion failed above,
-                                     # maybe we should stick to standard names only, or accept the 'UTC+HH:MM' string but warn.
-                                     # For now, let's accept 'UTC+HH:MM' string if conversion to Etc/GMT fails.
-                                     pass # Keep the UTC+HH:MM string as valid_timezone
+                      elif offset_sign_hours:
+                          hours = int(offset_sign_hours)
+                          minutes = int(offset_minutes) if offset_minutes else 0
+                          if abs(hours) <= 14 and minutes >= 0 and minutes < 60: # Max UTC offset is around +/- 14
+                              # Construct a consistent UTC+HH:MM string format
+                               sign = '+' if hours >= 0 else '-'
+                               valid_timezone = f"UTC{sign}{abs(hours):02d}:{minutes:02d}"
+                               # Attempt Etc/GMT conversion again for standard names preference
+                               try:
+                                   total_seconds = (hours * 3600 + sign_multiplier * minutes * 60)
+                                   offset_td = dt.timedelta(seconds=total_seconds)
+                                   offset_minutes_total = int(offset_td.total_seconds() / 60)
+                                   if offset_minutes_total % 60 == 0:
+                                        hours_offset = offset_minutes_total // 60
+                                        gmt_offset_str = f"Etc/GMT{-hours_offset}" # Etc/GMT sign is opposite
+                                        if gmt_offset_str in pytz.all_timezones_set:
+                                             valid_timezone = gmt_offset_str
+                               except Exception:
+                                    pass # Keep UTC+HH:MM if Etc/GMT conversion fails
 
 
              except Exception:
                   pass # Regex or parsing failed
+
 
     if valid_timezone is None:
         await message.reply(TEXTS["invalid_timezone"][lang])
@@ -2843,3 +3104,4 @@ async def handle_unknown_callback_in_state(call: types.CallbackQuery, lang: str)
 
 if __name__ == "__main__":
     executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+
