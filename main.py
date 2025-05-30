@@ -362,44 +362,37 @@ class DBMiddleware(BaseMiddleware):
             if user.last_name:
                 name += " " + user.last_name
             if username:
-                 name = "@" + username # Prefer @username if available
+                 name = "@" + username
 
             user_record = user_cache.get(tg_id)
 
             if not user_record:
-                # Try fetching from DB using tg_id
-                # Использование tg_id для поиска пользователя
-                res = supabase.table("users").select("*").eq("tg_id", tg_id).execute()
+                # Try fetching from DB using telegram_user_id
+                res = supabase.table("users").select("*").eq("telegram_user_id", tg_id).execute()
                 if res.data:
                     user_record = res.data[0]
                     # Update name in DB if changed
-                    # Обновление имени пользователя по его Supabase ID
-                    if user_record.get("name") != name: # Use get for safety
+                    if user_record.get("name") != name:
                          supabase.table("users").update({"name": name}).eq("id", user_record["id"]).execute()
-                         user_record["name"] = name # Update cached version too
-                    user_cache[tg_id] = user_record # Cache the full record
+                         user_record["name"] = name
+                    user_cache[tg_id] = user_record
                 else:
-                    # Insert new user with tg_id
-                    # Вставка нового пользователя, включая tg_id
-                    res_insert = supabase.table("users").insert({"tg_id": tg_id, "name": name}).execute()
+                    # Insert new user with telegram_user_id
+                    res_insert = supabase.table("users").insert({"telegram_user_id": tg_id, "name": name}).execute()
                     if res_insert.data:
                         user_record = res_insert.data[0]
-                        user_cache[tg_id] = user_record # Cache new record
+                        user_cache[tg_id] = user_record
                         logger.info(f"New user registered: {tg_id} ({name})")
                     else:
                         logger.error(f"Failed to insert new user {tg_id}: {res_insert.error}")
-                        # Cannot proceed without a user record
                         return
 
             if user_record:
-                # Передача Supabase ID пользователя в data для использования в хэндлерах
                 data["user_id"] = user_record["id"]
                 data["lang"] = user_record.get("language", "ru")
-                data["timezone"] = user_record.get("timezone", "UTC") # Default to UTC if not set
+                data["timezone"] = user_record.get("timezone", "UTC")
             else:
                  logger.error(f"User record is None after DB check/insert for tg_id {tg_id}")
-                 # Handle critical error - cannot proceed for this user
-                 # Attempt to notify the user and consume the update
                  try:
                       if update.message:
                           await bot.send_message(tg_id, "Произошла внутренняя ошибка при идентификации пользователя. Пожалуйста, попробуйте позже." if user_record.get("language", "ru") == "ru" else "An internal error occurred while identifying the user. Please try again later.")
@@ -408,9 +401,7 @@ class DBMiddleware(BaseMiddleware):
                  except Exception as e:
                      logger.error(f"Failed to send error message to user {tg_id}: {e}")
 
-                 update.consumed = True # Consume update if we can't get user info
-
-dp.middleware.setup(DBMiddleware())
+                 update.consumed = True
 
 # FSM state groups
 class PostStates(StatesGroup):
