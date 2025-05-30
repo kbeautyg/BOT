@@ -441,7 +441,7 @@ async def wrong_media_input(message: types.Message, state: FSMContext):
         lang = user_cache[tg_id]["lang"]
         await message.reply(TEXTS["enter_post_media"][lang])
 
-@dp.message_handler(commands=['skip'], state=PostStates.waiting_for_media)
+@dp.message_handler(lambda m: m.text and m.text.lower() in ["/skip", "скип", "пропустить"], state=PostStates.waiting_for_media)
 async def skip_post_media(message: types.Message, state: FSMContext):
     await state.update_data(media_type=None, media_file_id=None)
     await PostStates.waiting_for_button_text.set()
