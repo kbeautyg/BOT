@@ -1,6 +1,10 @@
-aiogram==2.25.2
-supabase>=2.0.0
-python-dotenv>=1.0
-pytz>=2024.1
-apscheduler
-dateparser
+aiogram>=3.2.0
+apscheduler>=3.10.0
+SQLAlchemy>=2.0.0
+asyncpg>=0.27.0
+python-dotenv>=0.20.0
+feedparser>=6.0.0
+pytz # Для работы с часовыми поясами
+uvicorn # Могут потребоваться для webhook или веб-части (если есть)
+fastapi # Могут потребоваться для webhook или веб-части (если есть)
+setuptools # Общая зависимость
